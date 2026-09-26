@@ -39,6 +39,8 @@ pub const cases = [_]Case{
     .{ .name = "invalid_hex_digit", .source = "  LD A,0x1G\n", .expect = "line 1: invalid number '0x1G'" },
     .{ .name = "empty_hex", .source = "  LD A,0x\n", .expect = "line 1: invalid number '0x'" },
     .{ .name = "stray_character", .source = "  LD A,@\n", .expect = "line 1: unexpected character '@'" },
+    .{ .name = "unknown_escape", .source = "  DB \"a\\qb\"\n", .expect = "line 1: unknown escape '\\q' in string" },
+    .{ .name = "escaped_closing_quote", .source = "  DB \"a\\\"\n", .expect = "line 1: unterminated string" },
     .{ .name = "unterminated_string", .source = "  DB \"abc\n", .expect = "line 1: unterminated string" },
     .{ .name = "line_starts_with_number", .source = "  5\n", .expect = "line 1: expected an instruction or directive, found '5'" },
     .{ .name = "trailing_operand", .source = "  NOP A\n", .expect = "line 1: unexpected 'A'" },

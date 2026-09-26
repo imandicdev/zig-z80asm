@@ -528,8 +528,10 @@ fn primary(a: *Assembler, l: *Line) Error!Value {
     switch (t.tag) {
         .number => return .{ .value = parseNumber(t.text) orelse return a.fail("invalid number '{s}'", .{t.text}) },
         .string => {
-            if (t.text.len != 1) return a.fail("string '{s}' used as a number", .{t.text});
-            return .{ .value = t.text[0] };
+            var it: StringBytes = .init(t.text);
+            const c = try a.stringByte(&it) orelse return a.fail("string {s} used as a number", .{t.text});
+            if (try a.stringByte(&it) != null) return a.fail("string {s} used as a number", .{t.text});
+            return .{ .value = c };
         },
         .dollar => return .{ .value = @intCast(a.statement_pc) },
         // Where an operand is expected, '%' starts a binary number ("DB %0101").
@@ -1263,7 +1265,7 @@ fn dataBytes(a: *Assembler, l: *Line) Error!void {
         const next = l.peekAt(1).tag;
         if (t.tag == .string and (next == .comma or next == .end)) {
             _ = l.take();
-            try a.bytes(t.text);
+            try a.stringBytes(t);
         } else {
             try a.store(a.byteOf(try a.expression(l)));
         }
@@ -1274,8 +1276,52 @@ fn dataBytes(a: *Assembler, l: *Line) Error!void {
 fn asciiString(a: *Assembler, l: *Line, zero: bool) Error!void {
     const t = l.take();
     if (t.tag != .string) return a.fail("expected a string, found '{s}'", .{t.text});
-    try a.bytes(t.text);
+    try a.stringBytes(t);
     if (zero) try a.store(0);
+}
+
+/// The bytes of a string token: sjasmplus escapes in "...", and '' for a
+/// quote in '...'.
+const StringBytes = struct {
+    text: []const u8,
+    quote: u8,
+    pos: usize = 1,
+
+    fn init(token_text: []const u8) StringBytes {
+        return .{ .text = token_text[0 .. token_text.len - 1], .quote = token_text[0] };
+    }
+};
+
+fn stringByte(a: *Assembler, it: *StringBytes) Error!?u8 {
+    if (it.pos >= it.text.len) return null;
+    const c = it.text[it.pos];
+    it.pos += 1;
+    if (c == '\'' and it.quote == '\'') {
+        it.pos += 1; // the second quote of ''
+        return c;
+    }
+    if (c != '\\' or it.quote != '"') return c;
+    const e = it.text[it.pos];
+    it.pos += 1;
+    return switch (std.ascii.toLower(e)) {
+        '\\', '\'', '"', '?' => e,
+        '0' => 0,
+        'a' => 7,
+        'b' => 8,
+        'd' => 0x7F,
+        'e' => 0x1B,
+        'f' => 0x0C,
+        'n' => 0x0A,
+        'r' => 0x0D,
+        't' => 0x09,
+        'v' => 0x0B,
+        else => a.fail("unknown escape '\\{c}' in string", .{e}),
+    };
+}
+
+fn stringBytes(a: *Assembler, t: Token) Error!void {
+    var it: StringBytes = .init(t.text);
+    while (try a.stringByte(&it)) |c| try a.store(c);
 }
 
 fn dataWords(a: *Assembler, l: *Line) Error!void {

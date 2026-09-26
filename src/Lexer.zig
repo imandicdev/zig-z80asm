@@ -126,13 +126,24 @@ fn identifier(l: *Lexer, start: usize) Token {
     return l.token(.identifier, start);
 }
 
-/// Token text excludes the quotes.
+/// Token text includes the quotes; the assembler decodes it. A backslash
+/// escapes the next character in "...", and '' is a quote inside '...'.
 fn string(l: *Lexer, quote: u8, start: usize) Token {
-    const body = l.pos;
-    while (l.pos < l.src.len and l.src[l.pos] != quote) l.pos += 1;
-    if (l.pos >= l.src.len) return l.token(.unterminated_string, start);
-    l.pos += 1;
-    return .{ .tag = .string, .text = l.src[body .. l.pos - 1], .col = start };
+    while (l.pos < l.src.len) {
+        const c = l.src[l.pos];
+        l.pos += 1;
+        if (c == '\\' and quote == '"') {
+            l.pos += 1;
+        } else if (c == quote) {
+            if (quote == '\'' and l.pos < l.src.len and l.src[l.pos] == '\'') {
+                l.pos += 1;
+            } else {
+                return l.token(.string, start);
+            }
+        }
+    }
+    l.pos = l.src.len;
+    return l.token(.unterminated_string, start);
 }
 
 fn isIdentStart(c: u8) bool {
@@ -180,7 +191,14 @@ test "SDCC local labels, AF' and strings" {
     try std.testing.expectEqualStrings("af'", l.next().text);
     const s = l.next();
     try std.testing.expectEqual(.string, s.tag);
-    try std.testing.expectEqualStrings("a;b", s.text);
+    try std.testing.expectEqualStrings("\"a;b\"", s.text);
+    try std.testing.expectEqual(.unterminated_string, l.next().tag);
+}
+
+test "escaped and doubled quotes do not end a string" {
+    var l = init("\"a\\\"b\" 'it''s' \"x\\\"");
+    try std.testing.expectEqualStrings("\"a\\\"b\"", l.next().text);
+    try std.testing.expectEqualStrings("'it''s'", l.next().text);
     try std.testing.expectEqual(.unterminated_string, l.next().tag);
 }
 
