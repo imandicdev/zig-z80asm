@@ -640,9 +640,44 @@ const Reg = enum { a, b, c, d, e, h, l, i, r, ixh, ixl, iyh, iyl, af, af_alt, bc
 
 fn register(name: []const u8) ?Reg {
     if (std.ascii.eqlIgnoreCase(name, "af'")) return .af_alt;
-    var buf: [3]u8 = undefined;
-    if (name.len > buf.len) return null;
-    return std.meta.stringToEnum(Reg, std.ascii.lowerString(&buf, name));
+    // The length check also keeps the tag name "af_alt" from matching.
+    if (name.len > 3) return null;
+    return NameTable(Reg).get(name);
+}
+
+/// Case-insensitive lookup of an enum by tag name through a hash table built at
+/// comptime. std.meta.stringToEnum on a lowercased copy is much slower when the
+/// assembler runs at comptime.
+fn NameTable(comptime E: type) type {
+    const fields = @typeInfo(E).@"enum".fields;
+    const size = std.math.ceilPowerOfTwo(usize, 2 * fields.len) catch unreachable;
+    return struct {
+        const slots: [size]?E = blk: {
+            @setEvalBranchQuota(100_000);
+            var table: [size]?E = @splat(null);
+            for (fields) |f| {
+                var i = hashLower(f.name) & (size - 1);
+                while (table[i] != null) i = (i + 1) & (size - 1);
+                table[i] = @field(E, f.name);
+            }
+            break :blk table;
+        };
+
+        fn get(name: []const u8) ?E {
+            var i = hashLower(name) & (size - 1);
+            while (slots[i]) |e| : (i = (i + 1) & (size - 1)) {
+                if (std.ascii.eqlIgnoreCase(@tagName(e), name)) return e;
+            }
+            return null;
+        }
+    };
+}
+
+/// FNV-1a over the lowercased bytes.
+fn hashLower(s: []const u8) u32 {
+    var h: u32 = 0x811C9DC5;
+    for (s) |c| h = (h ^ std.ascii.toLower(c)) *% 0x01000193;
+    return h;
 }
 
 /// B, C, D, E, H, L and A as an isa register.
@@ -786,9 +821,8 @@ fn condition(l: *Line, followed_by_comma: bool) ?isa.Cc {
     const t = l.peek();
     if (t.tag != .identifier) return null;
     if (followed_by_comma and l.peekAt(1).tag != .comma) return null;
-    var buf: [2]u8 = undefined;
-    if (t.text.len > buf.len) return null;
-    const cc = std.meta.stringToEnum(isa.Cc, std.ascii.lowerString(&buf, t.text)) orelse return null;
+    if (t.text.len > 2) return null;
+    const cc = NameTable(isa.Cc).get(t.text) orelse return null;
     _ = l.take();
     if (followed_by_comma) _ = l.take();
     return cc;
@@ -890,9 +924,8 @@ const Keyword = enum {
 };
 
 fn keyword(name: []const u8) ?Keyword {
-    var buf: [8]u8 = undefined;
-    if (name.len > buf.len) return null;
-    return std.meta.stringToEnum(Keyword, std.ascii.lowerString(&buf, name));
+    if (name.len > 8) return null;
+    return NameTable(Keyword).get(name);
 }
 
 /// Assembles one line of source text. Labels defined on the line keep
