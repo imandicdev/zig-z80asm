@@ -318,6 +318,7 @@ pub fn bytes(a: *Assembler, data: []const u8) Error!void {
 pub fn eval(a: *Assembler, text: []const u8) Error!Value {
     a.statement_pc = a.pc;
     var l = try a.tokenize(text);
+    try a.expectFits(&l);
     const v = try a.expression(&l);
     try a.expectEnd(&l);
     return v;
@@ -490,10 +491,15 @@ fn bitOf(a: *Assembler, v: Value) u3 {
     return @truncate(@as(u32, @bitCast(v.value)));
 }
 
+/// The tokens of one line. When a line has more tokens than fit, `tokens`
+/// holds the first ones and an `.end` in the last slot, and `truncated` is
+/// set; only DB and DW read on (see `nextValue`).
 const Line = struct {
     tokens: [max_line_tokens]Token,
-    len: usize,
+    len: usize = 0,
     pos: usize = 0,
+    lexer: Lexer,
+    truncated: bool = false,
 
     fn peek(l: *const Line) Token {
         return l.tokens[l.pos];
@@ -518,23 +524,58 @@ const Line = struct {
         _ = l.take();
         return true;
     }
+
+    fn commaAhead(l: *const Line) bool {
+        for (l.tokens[l.pos..l.len]) |t| {
+            if (t.tag == .comma) return true;
+        }
+        return false;
+    }
 };
 
 fn tokenize(a: *Assembler, text: []const u8) Error!Line {
-    var l: Line = .{ .tokens = undefined, .len = 0 };
-    var lexer: Lexer = .init(text);
+    var l: Line = .{ .tokens = undefined, .lexer = .init(text) };
+    try a.lex(&l);
+    return l;
+}
+
+/// Fills the free slots of `l.tokens` from its lexer.
+fn lex(a: *Assembler, l: *Line) Error!void {
+    l.truncated = false;
     while (true) {
-        const t = lexer.next();
+        const t = l.lexer.next();
         switch (t.tag) {
             .invalid => return a.fail("unexpected character '{s}'", .{t.text}),
             .unterminated_string => return a.fail("unterminated string", .{}),
             else => {},
         }
-        if (l.len == max_line_tokens) return a.fail("line has more than {d} tokens", .{max_line_tokens});
+        if (l.len == max_line_tokens - 1 and t.tag != .end) {
+            l.lexer.pos = t.col;
+            l.tokens[l.len] = .{ .tag = .end, .text = "", .col = t.col };
+            l.len += 1;
+            l.truncated = true;
+            return;
+        }
         l.tokens[l.len] = t;
         l.len += 1;
-        if (t.tag == .end) return l;
+        if (t.tag == .end) return;
     }
+}
+
+fn expectFits(a: *Assembler, l: *const Line) Error!void {
+    if (l.truncated) return a.fail("line has more than {d} tokens", .{max_line_tokens});
+}
+
+/// Before each value of DB and DW: on a truncated line, drops the tokens
+/// already used and lexes on when the next value might not be complete.
+fn nextValue(a: *Assembler, l: *Line) Error!void {
+    if (!l.truncated or l.commaAhead()) return;
+    const rest = l.len - 1 - l.pos;
+    std.mem.copyForwards(Token, l.tokens[0..rest], l.tokens[l.pos..][0..rest]);
+    l.len = rest;
+    l.pos = 0;
+    try a.lex(l);
+    if (l.truncated and !l.commaAhead()) return a.fail("value has more than {d} tokens", .{max_line_tokens - 2});
 }
 
 fn expectEnd(a: *Assembler, l: *Line) Error!void {
@@ -1033,6 +1074,7 @@ fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!voi
         const t = l.peek();
         if (t.tag == .equal or (t.tag == .identifier and keyword(t.text) == .equ)) {
             _ = l.take();
+            try a.expectFits(&l);
             const v = try a.expression(&l);
             try a.expectEnd(&l);
             return a.equ(n, v);
@@ -1055,6 +1097,12 @@ fn kept(a: *const Assembler, t: Token) []const u8 {
 }
 
 fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
+    switch (kw) {
+        .db, .defb, .defm, .dm, .@".db", .@".byte" => return a.dataBytes(l),
+        .dw, .defw, .@".dw", .@".word" => return a.dataWords(l),
+        else => try a.expectFits(l),
+    }
+
     const fixed: ?isa.Encoding = switch (kw) {
         .nop => isa.nop(),
         .halt => isa.halt(),
@@ -1130,10 +1178,8 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
         .sll, .sli => a.rotate(l, .sll),
         .srl => a.rotate(l, .srl),
         .org, .@".org" => a.org(a.wordOf(try a.expression(l))),
-        .db, .defb, .defm, .dm, .@".db", .@".byte" => a.dataBytes(l),
         .@".ascii" => a.asciiString(l, false),
         .@".asciz" => a.asciiString(l, true),
-        .dw, .defw, .@".dw", .@".word" => a.dataWords(l),
         .ds, .defs, .@".ds" => a.reserve(l),
         .end => {
             // "END start" names the entry point, which a flat image does not need.
@@ -1436,6 +1482,7 @@ fn rotate(a: *Assembler, l: *Line, op: isa.Rot) Error!void {
 
 fn dataBytes(a: *Assembler, l: *Line) Error!void {
     while (true) {
+        try a.nextValue(l);
         const t = l.peek();
         const next = l.peekAt(1).tag;
         if (t.tag == .string and (next == .comma or next == .end)) {
@@ -1501,6 +1548,7 @@ fn stringBytes(a: *Assembler, t: Token) Error!void {
 
 fn dataWords(a: *Assembler, l: *Line) Error!void {
     while (true) {
+        try a.nextValue(l);
         const w = a.wordOf(try a.expression(l));
         try a.bytes(&.{ @truncate(w), @truncate(w >> 8) });
         if (!l.eat(.comma)) return;

@@ -46,4 +46,9 @@ pub const cases = [_]Case{
     .{ .name = "unterminated_string", .source = "  DB \"abc\n", .expect = "line 1: unterminated string" },
     .{ .name = "line_starts_with_number", .source = "  5\n", .expect = "line 1: expected an instruction or directive, found '5'" },
     .{ .name = "trailing_operand", .source = "  NOP A\n", .expect = "line 1: unexpected 'A'" },
+    .{ .name = "instruction_too_long", .source = "  LD A," ++ "1+" ** 40 ++ "1\n", .expect = "line 1: line has more than 64 tokens" },
+    .{ .name = "equ_too_long", .source = "x EQU " ++ "1+" ** 40 ++ "1\n", .expect = "line 1: line has more than 64 tokens" },
+    .{ .name = "data_value_too_long", .source = "  DB 1," ++ "1+" ** 40 ++ "1,2\n", .expect = "line 1: value has more than 62 tokens" },
+    .{ .name = "stray_character_after_many_values", .source = "  DB " ++ "1," ** 100 ++ "@\n", .expect = "line 1: unexpected character '@'" },
+    .{ .name = "garbage_after_many_values", .source = "  DW " ++ "1," ** 100 ++ "2 3\n", .expect = "line 1: unexpected '3'" },
 };
