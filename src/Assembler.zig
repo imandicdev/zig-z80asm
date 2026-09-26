@@ -124,7 +124,10 @@ other_area: ?[]const u8 = null,
 /// The line being assembled, as given by the caller. Tokens point into a
 /// temporary copy of it.
 original: []const u8 = "",
-written: std.StaticBitSet(0x10000) = .initEmpty(),
+/// One bit per address, for overlap checks. A byte slice into a local array
+/// of run(): at comptime, changing an element of a [1024]usize field of this
+/// struct cost about 8 KB of compiler memory per write.
+written: []u8,
 empty: bool = true,
 low: u32 = 0,
 high: u32 = 0,
@@ -139,11 +142,13 @@ overlap_reported: bool = false,
 /// a reused formatting buffer would rename earlier symbols.
 pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (@TypeOf(ctx), *Assembler) Error!void) Result {
     const slots = if (buffers.symbols.len == 0) 0 else std.math.floorPowerOfTwo(usize, buffers.symbols.len);
+    var written: [0x10000 / 8]u8 = undefined;
     var a: Assembler = .{
         .options = options,
         .out = buffers.output,
         .symbols = buffers.symbols[0..slots],
         .diagnostics = buffers.diagnostics,
+        .written = &written,
     };
     for (a.symbols) |*s| s.name = "";
     while (true) {
@@ -246,7 +251,7 @@ fn beginPass(a: *Assembler) void {
     a.other_area = null;
     a.diagnostic_count = 0;
     a.diagnostics_dropped = 0;
-    a.written = .initEmpty();
+    @memset(a.written, 0);
     a.empty = true;
     a.low = 0;
     a.high = 0;
@@ -339,11 +344,12 @@ fn store(a: *Assembler, b: u8) Error!void {
     try a.checkArea();
     if (a.pc > 0xFFFF) return a.fail("address beyond 0xFFFF", .{});
     const addr = a.pc;
-    if (a.written.isSet(addr)) {
+    const bit = @as(u8, 1) << @as(u3, @truncate(addr));
+    if (a.written[addr >> 3] & bit != 0) {
         if (!a.overlap_reported) a.report("overlap at 0x{X:0>4}: address written twice", .{addr});
         a.overlap_reported = true;
     }
-    a.written.set(addr);
+    a.written[addr >> 3] |= bit;
 
     if (a.empty) {
         a.empty = false;

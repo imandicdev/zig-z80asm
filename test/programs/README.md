@@ -40,6 +40,7 @@ Zig 0.16.0, Windows x86_64.
 | Keyword, register and condition tables | 5.2 ms / 44.7 ms | 12 s, 320 MB | |
 | Line ends found 32 bytes at a time | 5.3 ms / 43.9 ms | 11 s, 319 MB | 3 min 52 s, about 1 GB |
 | Source read in 4 KB blocks | 5.4 ms / 44.1 ms | 8 s, 343 MB | |
+| Overlap bitmap as a byte slice | 3.1 ms / 39.1 ms | 8 s, 312 MB | |
 
 ## SDCC
 
