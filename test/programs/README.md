@@ -22,16 +22,39 @@ The last form also assembles the Spectrum ROM at comptime, which is slow.
 | Reference binary | `48.rom` from the Fuse emulator, SHA-1 `5ea7c2b824672e914525d1d5c419d71b84a426a2` (the value MAME lists for the 48K ROM) |
 | License | The ROM code is copyright Amstrad plc. Amstrad allows distribution of the ROMs for use with emulators but keeps the copyright (message by Cliff Lawson, comp.sys.sinclair, 1999-08-31, reproduced in the repository's LICENSE.md). It may not be sold or included in this repository. |
 | Preparation | `fetch.py` writes `zx-spectrum-rom.prepared.asm`: the `include "zx-spectrum-sysvars.asm"` line is replaced by that file's text and the `OUTPUT "48.ROM"` line is dropped, because INCLUDE and OUTPUT are not in z80asm 0.1. No other change. |
-| Result | Identical: 16384 bytes, 0 differences, same SHA-1. At runtime this takes about 140 ms; at comptime (`-Dprograms-comptime=true`) the result is also identical, but compiling takes 28 minutes and 5 GB of memory with Zig 0.16.0. |
+| Result | Identical: 16384 bytes, 0 differences, same SHA-1, at runtime and at comptime (`-Dprograms-comptime=true`). Times are under Performance. |
 
 ## Performance
 
-Measured on the Spectrum ROM (17,700 lines after preparation) and on its
-first 2,528 lines (`zig build bench`, which also writes that slice;
-`zig build bench-comptime -Dnonce=N` assembles it at comptime). Runtime is
-the median of 25 runs; comptime is the compile step from `--summary all`,
-including about 2 s and 260 MB that the same test takes for a 10-line slice.
-Zig 0.16.0, Windows x86_64.
+The full Spectrum ROM (17,699 lines after preparation), before and after the
+optimizations. Zig 0.16.0, Windows x86_64.
+
+| | Before | After |
+|---|---|---|
+| Comptime: compile time | 28 min | 48 s |
+| Comptime: peak memory | about 5 GB | 1,076 MB |
+| Runtime, ReleaseFast | 13.1 ms | 3.1 ms |
+| Runtime, Debug | 107.6 ms | 39.5 ms |
+
+Comptime is the test's compile step with `-Dprograms-comptime=true`, in a
+Debug build as the tests use, so it includes the 0xAA overwrite of line
+copies. Peak memory "after" is the largest working set of any zig process
+during that build; "before" is Zig's own rounded MaxRSS ("5G"). Runtime is
+the median of 25 runs of `zig build bench`.
+
+The goal of 1 GB is missed by about 7%. What is left is spread over parsing,
+expressions and encoding at comptime, where every intermediate value stays
+in the compiler's memory until the comptime call ends; no single part
+accounts for 10%. The largest single one, the [64]Token array of each line,
+is about 6%.
+
+### Step by step
+
+`zig build bench` times the full ROM and a slice of its first 2,528 lines and
+writes that slice; `zig build bench-comptime -Dnonce=N` assembles the slice at
+comptime (-Dbench-lines picks another length). Slice times are the compile
+step from `--summary all`, including about 2 s and 260 MB that the same test
+takes for a 10-line slice.
 
 | Change | Runtime, full ROM (ReleaseFast / Debug) | Comptime, 2,528 lines | Comptime, full ROM |
 |---|---|---|---|
@@ -40,7 +63,8 @@ Zig 0.16.0, Windows x86_64.
 | Keyword, register and condition tables | 5.2 ms / 44.7 ms | 12 s, 320 MB | |
 | Line ends found 32 bytes at a time | 5.3 ms / 43.9 ms | 11 s, 319 MB | 3 min 52 s, about 1 GB |
 | Source read in 4 KB blocks | 5.4 ms / 44.1 ms | 8 s, 343 MB | |
-| Overlap bitmap as a byte slice | 3.1 ms / 39.1 ms | 8 s, 312 MB | |
+| Overlap bitmap as a byte slice | 3.1 ms / 39.1 ms | 8 s, 312 MB | 49 s, 1,068 MB |
+| Line copies overwritten after use (Debug) | 3.1 ms / 39.5 ms | | 48 s, 1,076 MB |
 
 ## SDCC
 
