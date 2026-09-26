@@ -24,6 +24,19 @@ The last form also assembles the Spectrum ROM at comptime, which is slow.
 | Preparation | The `include "zx-spectrum-sysvars.asm"` line is replaced by that file's text and the `OUTPUT "48.ROM"` line is dropped, because INCLUDE and OUTPUT are not in z80asm 0.1. No other change. |
 | Result | Identical: 16384 bytes, 0 differences, same SHA-1. At runtime this takes about 140 ms; at comptime (`-Dprograms-comptime=true`) the result is also identical, but compiling takes 28 minutes and 5 GB of memory with Zig 0.16.0. |
 
+## Performance
+
+Measured on the Spectrum ROM (17,700 lines after preparation) and on its
+first 2,528 lines (`zig build bench`, which also writes that slice;
+`zig build bench-comptime -Dnonce=N` assembles it at comptime). Runtime is
+the median of 25 runs; comptime is the compile step from `--summary all`,
+including about 2 s and 260 MB that the same test takes for a 10-line slice.
+Zig 0.16.0, Windows x86_64.
+
+| Change | Runtime, full ROM (ReleaseFast / Debug) | Comptime, 2,528 lines | Comptime, full ROM |
+|---|---|---|---|
+| Baseline | 13.1 ms / 107.6 ms | 48 s, 720 MB | 28 min, 5 GB |
+
 ## SDCC
 
 | | |

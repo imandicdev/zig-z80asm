@@ -95,6 +95,35 @@ pub fn build(b: *std.Build) void {
         }
         const programs_step = b.step("programs", "Compare known programs with their original binaries");
         programs_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = programs })).step);
+
+        // Performance measurement on the Spectrum ROM (see test/programs/README.md).
+        const bench = b.createModule(.{
+            .root_source_file = b.path("bench/bench.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        bench.addImport("z80asm", mod);
+        bench.addImport("spectrum", b.createModule(.{ .root_source_file = b.path("test/spectrum.zig") }));
+        for (files[0..3]) |f| {
+            bench.addAnonymousImport(f[0], .{ .root_source_file = .{ .cwd_relative = b.pathJoin(&.{ dir, f[1] }) } });
+        }
+        const medium_path = b.pathJoin(&.{ dir, "bench", "rom-medium.asm" });
+        const bench_run = b.addRunArtifact(b.addExecutable(.{ .name = "bench", .root_module = bench }));
+        bench_run.addArgs(&.{ b.fmt("{d}", .{b.option(usize, "bench-lines", "Lines in the medium slice") orelse 2500}), medium_path });
+        b.step("bench", "Time the Spectrum ROM at runtime and write the medium slice").dependOn(&bench_run.step);
+
+        const nonce_options = b.addOptions();
+        nonce_options.addOption(u64, "nonce", b.option(u64, "nonce", "Forces the comptime benchmark to recompile") orelse 0);
+        const bench_comptime = b.createModule(.{
+            .root_source_file = b.path("bench/comptime_medium.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        bench_comptime.addImport("z80asm", mod);
+        bench_comptime.addOptions("options", nonce_options);
+        bench_comptime.addAnonymousImport("rom_medium_asm", .{ .root_source_file = .{ .cwd_relative = medium_path } });
+        b.step("bench-comptime", "Assemble the medium slice at comptime (run bench first)")
+            .dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = bench_comptime })).step);
     }
 
     // isa.zig against sjasmplus. Run `python compare/gen_isa.py` first.
