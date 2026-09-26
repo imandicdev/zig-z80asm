@@ -1,10 +1,11 @@
 # zig-z80asm
 
-A Z80 assembler for Zig, as the package and module `z80asm`. The same code
-assembles at comptime, where the result is a `[]const u8` constant and
-errors are compile errors, and at runtime, where errors come back as data.
-It needs no allocator and does no I/O: the caller provides the output,
-symbol and diagnostic buffers.
+A Z80 assembler for Zig, as the package and module `z80asm`. It takes
+ordinary Z80 assembly source, such as a `.asm` file, and turns it into
+bytes: at comptime, where they become a `[]const u8` constant and errors
+are compile errors, or at runtime, where errors come back as data. It needs
+no allocator and does no I/O: the caller provides the output, symbol and
+diagnostic buffers.
 
 ## Why
 
@@ -17,29 +18,33 @@ mistake such as a jump out of range or an overlapping write stops the build.
 
 ## Use
 
-Requires Zig 0.16.0.
+Write the program as ordinary Z80 assembly, for example `program.asm`:
 
-```
-zig fetch --save git+https://github.com/imandicdev/zig-z80asm#v0.1.0
-```
-
-and import the module in `build.zig`:
-
-```zig
-const z80asm = b.dependency("z80asm", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("z80asm", z80asm.module("z80asm"));
+```asm
+        ORG 8000h
+start:  LD B,5
+        XOR A
+loop:   ADD A,3         ; runs B times
+        DJNZ loop
+        LD (result),A
+        RET
+result: DB 0
 ```
 
 ### At comptime
 
+One line in the Zig program assembles the file while it compiles:
+
 ```zig
 const z80 = @import("z80asm");
 
-const rom = z80.comptimeAssemble(@embedFile("rom.asm"), .{});
+const program = z80.comptimeAssemble(@embedFile("program.asm"), .{});
 ```
 
-Inside a function, write `comptime z80.comptimeAssemble(...)`. Any error
-stops the build with the assembler's messages:
+`program` is a `[]const u8` constant with the bytes, here
+`06 05 AF C6 03 10 FC 32 0B 80 C9 00`. Inside a function, write
+`comptime z80.comptimeAssemble(...)`. A mistake in the source stops the
+build with the assembler's messages:
 
 ```
 src/root.zig:69:9: error: Z80 assembly failed:
@@ -51,6 +56,8 @@ not start with ORG, default 0), `max_symbols` (default 2048) and
 `max_diagnostics` (default 16).
 
 ### At runtime
+
+The same source text, read or generated while the program runs:
 
 ```zig
 var workspace: z80.Workspace(0x10000, 4096, 32) = undefined;
@@ -66,12 +73,35 @@ if (!result.ok()) {
 example is about 260 KB), so keep it global or on the heap. `symbol_slots`
 must be a power of two; half of it is the symbol capacity.
 
-### From Zig code
+### Command line
 
-Source text and Zig calls go through the same path, so a program can be
-written in assembly, built from Zig code, or both. A body gets an
-`*Assembler` and can mix instruction calls from `z80.isa` with source lines.
-Here a DJNZ loop runs `ADD A,3` B times and stores the result:
+`zig build` in this repository also installs a command-line assembler:
+
+```
+z80asm [--origin ADDR] program.asm program.bin
+```
+
+### Installing
+
+Requires Zig 0.16.0.
+
+```
+zig fetch --save git+https://github.com/imandicdev/zig-z80asm#v0.1.0
+```
+
+and import the module in `build.zig`:
+
+```zig
+const z80asm = b.dependency("z80asm", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("z80asm", z80asm.module("z80asm"));
+```
+
+### Generating code from Zig (optional)
+
+The assembler can also be driven from Zig, for code that is easier to
+compute than to write, such as tables. These calls go through the same path
+as source text and can be mixed with source lines. The program above,
+partly as calls:
 
 ```zig
 fn program(_: void, a: *z80.Assembler) z80.Assembler.Error!void {
@@ -95,14 +125,6 @@ const image = z80.comptimeBuild(.{}, {}, program);
 The body runs once per pass, so it must do the same thing every time. Names
 given to `label` and `equ`, and text given to `line`, are not copied and must
 stay valid until assembly ends.
-
-### Command line
-
-`zig build` also installs a command-line assembler:
-
-```
-z80asm [--origin ADDR] INPUT.asm OUTPUT.bin
-```
 
 ## Syntax
 
