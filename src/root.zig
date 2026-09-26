@@ -21,7 +21,8 @@ pub const Workspace = Assembler.Workspace;
 pub const assemble = Assembler.assemble;
 pub const run = Assembler.run;
 
-/// Capacity used by the comptime entry points.
+/// Capacity of the comptime entry points: the whole 64 KB, 2048 symbols and
+/// 16 diagnostics.
 const ComptimeWorkspace = Workspace(0x10000, 4096, 16);
 
 /// Assembles source text at compile time. Errors become compile errors.

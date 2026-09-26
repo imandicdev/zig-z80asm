@@ -132,7 +132,7 @@ other_area: ?[]const u8 = null,
 original: []const u8 = "",
 /// One bit per address, for overlap checks. A byte slice into a local array
 /// of run(): at comptime, changing an element of a [1024]usize field of this
-/// struct cost about 8 KB of compiler memory per write.
+/// struct costs about 8 KB of compiler memory per write.
 written: []u8,
 empty: bool = true,
 low: u32 = 0,
@@ -178,7 +178,7 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
     };
 }
 
-/// Assembles source text.
+/// Assembles a whole source text, up to its END if it has one.
 pub fn assemble(source: []const u8, options: Options, buffers: Buffers) Result {
     return run(options, buffers, source, assembleLines);
 }
@@ -285,7 +285,7 @@ fn fail(a: *Assembler, comptime fmt: []const u8, args: anytype) Error {
     return error.AssemblyFailed;
 }
 
-/// Current address.
+/// Address of the next byte.
 pub fn here(a: *const Assembler) u16 {
     return @truncate(a.pc);
 }

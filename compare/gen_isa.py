@@ -6,7 +6,7 @@ by sjasmplus, and is mapped to the matching isa.zig call. The generated Zig test
 against the list's Hex column, so a mistake in the list shows up too.
 
 Usage, from the repository root:
-    python compare/gen_isa.py && zig build compare-isa
+    python compare/gen_isa.py && zig build compare
 """
 
 import os
