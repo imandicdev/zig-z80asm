@@ -118,9 +118,9 @@ needs for sdasz80.
   address of the current statement, and SDCC's `#<x` and `#>x` for the low
   and high byte. Precedence from lowest: `|`, `^`, `&`, shifts, `+ -`,
   `* / %`.
-- Labels: `name:`, `name::`, or a name in column 0. SDCC's `00101$` labels
-  are local to the part between two ordinary labels. `name EQU value` and
-  `name = value`.
+- Labels: `name:`, `name::`, or a name in column 0 that is not an
+  instruction or directive. SDCC's `00101$` labels are local to the part
+  between two ordinary labels. `name EQU value` and `name = value`.
 - Directives: ORG; DB, DEFB, DEFM, DM; DW, DEFW; DS, DEFS (count and
   optional fill byte); END with an optional entry address; and the SDCC forms
   `.org .db .byte .dw .word .ds .ascii .asciz .area .globl .module .optsdcc`.
@@ -131,7 +131,7 @@ to 8 passes.
 
 ## Differences from sjasmplus
 
-Three, all deliberate:
+Four, all deliberate:
 
 - The output is a memory image from the lowest to the highest address
   written. Gaps between ORGs are zeros, and code after an ORG below earlier
@@ -143,6 +143,9 @@ Three, all deliberate:
   `#0x0a` or `#_table`.
 - DB and DW take any number of values; sjasmplus stops at 128 bytes in one
   DB and 128 values in one DW.
+- An instruction or directive in column 0 is assembled as one: `NOP` there
+  gives 00. sjasmplus reads anything in column 0 as a label, so the same
+  line defines a label NOP and emits nothing.
 
 ## Not in 0.1
 
