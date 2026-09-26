@@ -112,6 +112,9 @@ unresolved: u32 = 0,
 changed: ?[]const u8 = null,
 /// Last ordinary label; scope of the following sdas local labels.
 scope: []const u8 = "",
+/// Current sdas area when it is not _CODE. Areas are placed by the SDCC
+/// linker, which z80asm does not replace, so only _CODE may hold anything.
+other_area: ?[]const u8 = null,
 written: std.StaticBitSet(0x10000) = .initEmpty(),
 empty: bool = true,
 low: u32 = 0,
@@ -174,6 +177,7 @@ fn beginPass(a: *Assembler) void {
     a.unresolved = 0;
     a.changed = null;
     a.scope = "";
+    a.other_area = null;
     a.diagnostic_count = 0;
     a.diagnostics_dropped = 0;
     a.written = .initEmpty();
@@ -213,6 +217,7 @@ pub fn org(a: *Assembler, address: u16) void {
 }
 
 pub fn label(a: *Assembler, name: []const u8) Error!void {
+    try a.checkArea();
     try a.define(name, .{ .value = @intCast(a.pc) });
     if (!isLocal(name)) a.scope = name;
 }
@@ -258,7 +263,12 @@ pub fn displacement(a: *Assembler, text: []const u8) Error!i8 {
     return a.displacementOf(try a.eval(text));
 }
 
+fn checkArea(a: *Assembler) Error!void {
+    if (a.other_area) |area| return a.fail("only the _CODE area is supported, not '{s}'", .{area});
+}
+
 fn store(a: *Assembler, b: u8) Error!void {
+    try a.checkArea();
     if (a.pc > 0xFFFF) return a.fail("address beyond 0xFFFF", .{});
     const addr = a.pc;
     if (a.written.isSet(addr)) {
@@ -976,7 +986,13 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
             a.ended = true;
         },
         .equ => a.fail("EQU needs a label", .{}),
-        .@".area", .@".globl", .@".module", .@".optsdcc" => l.pos = l.len - 1,
+        .@".area" => {
+            const name = l.take();
+            if (name.tag != .identifier) return a.fail("expected an area name, found '{s}'", .{name.text});
+            a.other_area = if (std.mem.eql(u8, name.text, "_CODE")) null else name.text;
+            l.pos = l.len - 1; // "(ABS)" and other attributes
+        },
+        .@".globl", .@".module", .@".optsdcc" => l.pos = l.len - 1,
         else => unreachable,
     };
 }

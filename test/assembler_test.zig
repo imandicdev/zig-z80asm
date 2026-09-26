@@ -48,6 +48,17 @@ test "SDCC syntax" {
     , &.{ 0x3E, 0x01, 0x90, 0x20, 0xFB, 0x42, 'o', 'k', 'z', 0 });
 }
 
+test "empty SDCC areas are accepted" {
+    try expectBytes(
+        \\  .area _DATA
+        \\  .area _DABS (ABS)
+        \\  .area _CODE
+        \\  ret
+        \\  .area _INITIALIZER
+        \\  .area _CABS (ABS)
+    , &.{0xC9});
+}
+
 test "sdas index operands, low/high byte and reusable local labels" {
     try expectBytes(
         \\_first::

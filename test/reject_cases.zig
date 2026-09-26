@@ -24,6 +24,7 @@ pub const cases = [_]Case{
     .{ .name = "undefined_symbol", .source = "  JP nowhere\n", .expect = "line 1: undefined symbol 'nowhere'" },
     .{ .name = "circular_equ", .source = "x EQU y\ny EQU x\n  LD A,x\n", .expect = "line 1: symbol 'y' has no value" },
     .{ .name = "self_referencing_ds", .source = "  DS n\nn EQU n\n", .expect = "line 1: symbol 'n' has no value" },
+    .{ .name = "sdcc_data_area", .source = "  .area _DATA\n_x::\n  .ds 2\n", .expect = "line 2: only the _CODE area is supported, not '_DATA'" },
     .{ .name = "local_label_other_scope", .source = "f:\n1$: NOP\ng: JR 1$\n", .expect = "line 3: undefined symbol '1$'" },
     .{ .name = "duplicate_symbol", .source = "L1: NOP\nL1: NOP\n", .expect = "line 2: duplicate symbol 'L1'" },
     .{ .name = "end_undefined_entry", .source = "  NOP\n  END start\n", .expect = "line 2: undefined symbol 'start'" },
