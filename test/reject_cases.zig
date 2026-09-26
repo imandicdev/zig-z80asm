@@ -22,6 +22,8 @@ pub const cases = [_]Case{
     .{ .name = "relative_jump_huge_target", .source = "  JR -2147483647\n", .expect = "line 1: relative jump out of range (-2147483649 bytes)" },
     .{ .name = "division_by_zero", .source = "  DB 1/0\n", .expect = "line 1: division by zero" },
     .{ .name = "undefined_symbol", .source = "  JP nowhere\n", .expect = "line 1: undefined symbol 'nowhere'" },
+    .{ .name = "circular_equ", .source = "x EQU y\ny EQU x\n  LD A,x\n", .expect = "line 1: symbol 'y' has no value" },
+    .{ .name = "self_referencing_ds", .source = "  DS n\nn EQU n\n", .expect = "line 1: symbol 'n' has no value" },
     .{ .name = "local_label_other_scope", .source = "f:\n1$: NOP\ng: JR 1$\n", .expect = "line 3: undefined symbol '1$'" },
     .{ .name = "duplicate_symbol", .source = "L1: NOP\nL1: NOP\n", .expect = "line 2: duplicate symbol 'L1'" },
     .{ .name = "equ_without_label", .source = "  EQU 5\n", .expect = "line 1: EQU needs a label" },

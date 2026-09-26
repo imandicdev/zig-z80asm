@@ -78,6 +78,12 @@ test "forward references are not range-checked before they have a value" {
     try std.testing.expectEqual(2, runtime(source).passes);
 }
 
+test "an EQU chain defined out of order still resolves" {
+    const source = "  LD A,x\nx EQU y+1\ny EQU z*2\nz EQU 3\n";
+    try expectBytes(source, &.{ 0x3E, 7 });
+    try std.testing.expect(runtime(source).passes >= 3);
+}
+
 test "a real range error is still reported" {
     try expectDiagnostic("  JR far\n  DS 200\nfar: NOP\n", "line 1: relative jump out of range (200 bytes)");
     try expectDiagnostic("  LD A,big\nbig EQU 300\n", "line 1: value 300 does not fit in 8 bits");

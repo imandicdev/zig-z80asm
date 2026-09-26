@@ -327,7 +327,11 @@ fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
 
 fn symbolValue(a: *Assembler, name: []const u8) Value {
     if (a.find(name)) |s| {
-        if (!s.known) a.unresolved += 1;
+        if (!s.known) {
+            a.unresolved += 1;
+            // Defined, but only in terms of itself or of undefined symbols.
+            if (a.pass > 1) a.report("symbol '{s}' has no value", .{name});
+        }
         return .{ .value = s.value, .known = s.known };
     }
     a.unresolved += 1;
