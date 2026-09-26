@@ -31,6 +31,27 @@ fn expectDiagnostic(source: []const u8, expected: []const u8) !void {
     try std.testing.expectEqualStrings(expected, try std.fmt.bufPrint(&buf, "{f}", .{r.diagnostics[0]}));
 }
 
+test "lines longer than the read buffer and labels used across buffer refills" {
+    const long = "x" ** 5000;
+    const source = "first: NOP\n; " ++ long ++ "\n" ++ ("  NOP ; filler\n" ** 400) ++
+        "big: NOP ; " ++ long ++ "\n  JP first\n  JP big\n  JR last\nlast: NOP\n";
+    const expected = [_]u8{0} ** 402 ++ [_]u8{ 0xC3, 0x00, 0x00, 0xC3, 0x91, 0x01, 0x18, 0x00, 0x00 };
+    try expectBytes(source, &expected);
+}
+
+fn longLines(_: void, a: *Assembler) Assembler.Error!void {
+    try a.line("start: NOP ; " ++ "y" ** 300);
+    try a.line("  JP start ; " ++ "z" ** 300);
+}
+
+test "Zig bodies may pass lines longer than the copy buffer" {
+    const expected = [_]u8{ 0x00, 0xC3, 0x00, 0x00 };
+    try std.testing.expectEqualSlices(u8, &expected, comptime z80.comptimeBuild(.{}, {}, longLines));
+    const r = z80.run(.{}, workspace.buffers(), {}, longLines);
+    try expectOk(r);
+    try std.testing.expectEqualSlices(u8, &expected, r.bytes);
+}
+
 // Features that sjasmplus also accepts are checked against it in
 // test/cases_test.zig. SDCC syntax is not, so it is checked here.
 

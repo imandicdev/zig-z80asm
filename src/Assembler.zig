@@ -121,6 +121,9 @@ scope: []const u8 = "",
 /// Current sdas area when it is not _CODE. Areas are placed by the SDCC
 /// linker, which z80asm does not replace, so only _CODE may hold anything.
 other_area: ?[]const u8 = null,
+/// The line being assembled, as given by the caller. Tokens point into a
+/// temporary copy of it.
+original: []const u8 = "",
 written: std.StaticBitSet(0x10000) = .initEmpty(),
 empty: bool = true,
 low: u32 = 0,
@@ -170,29 +173,65 @@ pub fn assemble(source: []const u8, options: Options, buffers: Buffers) Result {
 }
 
 fn assembleLines(source: []const u8, a: *Assembler) Error!void {
+    var reader: LineReader = .{ .source = source };
     var start: usize = 0;
     var number: u32 = 0;
     while (start <= source.len and !a.ended) {
-        const end = lineEnd(source, start);
+        var end: usize = undefined;
+        const copy = reader.line(start, &end);
         number += 1;
         a.line_number = number;
-        a.line(source[start..end]) catch {};
+        a.assembleLine(source[start..end], copy orelse source[start..end]) catch {};
         start = end + 1;
     }
     a.line_number = 0;
 }
 
-/// Index of the first '\n' at or after `start`, or `source.len`. Compares 32
-/// bytes at a time: at comptime one vector compare costs far less than 32 steps
-/// of a byte loop, and source text is mostly long comment lines.
-fn lineEnd(source: []const u8, start: usize) usize {
+/// Hands out the lines of the source as copies in a local buffer. At comptime,
+/// each read from the source (an @embedFile, say) takes time proportional to
+/// its offset in the file, so reading it byte by byte is quadratic; a block
+/// copied with one @memcpy pays that cost once.
+const LineReader = struct {
+    source: []const u8,
+    buf: [4096]u8 = undefined,
+    /// Source offset of buf[0].
+    buf_start: usize = 0,
+    buf_len: usize = 0,
+
+    /// The line that starts at `start`, as a slice of the buffer, or null when
+    /// it is longer than the buffer. `end` gets the offset of its '\n' or the
+    /// end of the source.
+    fn line(r: *LineReader, start: usize, end: *usize) ?[]const u8 {
+        while (true) {
+            if (start >= r.buf_start and start <= r.buf_start + r.buf_len) {
+                const from = start - r.buf_start;
+                const i = from + lineEnd(r.buf[from..r.buf_len]);
+                if (i < r.buf_len or r.buf_start + r.buf_len == r.source.len) {
+                    end.* = r.buf_start + i;
+                    return r.buf[from..i];
+                }
+                if (from == 0 and r.buf_len == r.buf.len) {
+                    end.* = start + lineEnd(r.source[start..]);
+                    return null;
+                }
+            }
+            r.buf_start = start;
+            r.buf_len = @min(r.buf.len, r.source.len - start);
+            @memcpy(r.buf[0..r.buf_len], r.source[start..][0..r.buf_len]);
+        }
+    }
+};
+
+/// Index of the first '\n' in `text`, or `text.len`. Compares 32 bytes at a
+/// time, as one vector compare is much cheaper than 32 loop steps at comptime.
+fn lineEnd(text: []const u8) usize {
     const V = @Vector(32, u8);
-    var i = start;
-    while (i + 32 <= source.len) : (i += 32) {
-        const chunk: V = source[i..][0..32].*;
+    var i: usize = 0;
+    while (i + 32 <= text.len) : (i += 32) {
+        const chunk: V = text[i..][0..32].*;
         if (@reduce(.Or, chunk == @as(V, @splat('\n')))) break;
     }
-    while (i < source.len and source[i] != '\n') i += 1;
+    while (i < text.len and text[i] != '\n') i += 1;
     return i;
 }
 
@@ -946,8 +985,19 @@ fn keyword(name: []const u8) ?Keyword {
 /// Assembles one line of source text. Labels defined on the line keep
 /// pointing into `text`; see `run`.
 pub fn line(a: *Assembler, text: []const u8) Error!void {
+    // Work on a copy for the same reason as LineReader.
+    var buf: [256]u8 = undefined;
+    if (text.len > buf.len) return a.assembleLine(text, text);
+    @memcpy(buf[0..text.len], text);
+    return a.assembleLine(text, buf[0..text.len]);
+}
+
+/// `copy` holds the same bytes as `original` and is what gets parsed; names
+/// that outlive the line are taken from `original` (see `kept`).
+fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!void {
     a.statement_pc = a.pc;
-    var l = try a.tokenize(text);
+    a.original = original;
+    var l = try a.tokenize(copy);
 
     // A label is "name:" / "name::" anywhere, or a name in column 0 that is
     // not an instruction or directive.
@@ -956,11 +1006,11 @@ pub fn line(a: *Assembler, text: []const u8) Error!void {
     if (first.tag == .identifier) {
         const next = l.peekAt(1).tag;
         if (next == .colon or next == .double_colon) {
-            name = first.text;
+            name = a.kept(first);
             _ = l.take();
             _ = l.take();
         } else if (first.col == 0 and keyword(first.text) == null) {
-            name = first.text;
+            name = a.kept(first);
             _ = l.take();
         }
     }
@@ -982,6 +1032,12 @@ pub fn line(a: *Assembler, text: []const u8) Error!void {
     const kw = keyword(t.text) orelse return a.fail("unknown instruction '{s}'", .{t.text});
     try a.statement(&l, kw);
     try a.expectEnd(&l);
+}
+
+/// A token of the current line as a slice of the caller's text, for names kept
+/// after the line; the token itself points into a temporary copy.
+fn kept(a: *const Assembler, t: Token) []const u8 {
+    return a.original[t.col..][0..t.text.len];
 }
 
 fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
@@ -1074,7 +1130,7 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
         .@".area" => {
             const name = l.take();
             if (name.tag != .identifier) return a.fail("expected an area name, found '{s}'", .{name.text});
-            a.other_area = if (std.mem.eql(u8, name.text, "_CODE")) null else name.text;
+            a.other_area = if (std.mem.eql(u8, name.text, "_CODE")) null else a.kept(name);
             l.pos = l.len - 1; // "(ABS)" and other attributes
         },
         .@".globl", .@".module", .@".optsdcc" => l.pos = l.len - 1,
