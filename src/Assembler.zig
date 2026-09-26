@@ -26,6 +26,8 @@ pub const Options = struct {
 
 pub const Symbol = struct {
     name: []const u8,
+    /// For sdas local labels such as 00101$: the label they belong to.
+    scope: []const u8,
     value: i32,
     known: bool,
     /// Pass in which the symbol was last defined; detects duplicates.
@@ -108,6 +110,8 @@ ended: bool = false,
 unresolved: u32 = 0,
 /// Last symbol whose value differs from the previous pass.
 changed: ?[]const u8 = null,
+/// Last ordinary label; scope of the following sdas local labels.
+scope: []const u8 = "",
 written: std.StaticBitSet(0x10000) = .initEmpty(),
 empty: bool = true,
 low: u32 = 0,
@@ -169,6 +173,7 @@ fn beginPass(a: *Assembler) void {
     a.ended = false;
     a.unresolved = 0;
     a.changed = null;
+    a.scope = "";
     a.diagnostic_count = 0;
     a.diagnostics_dropped = 0;
     a.written = .initEmpty();
@@ -208,7 +213,8 @@ pub fn org(a: *Assembler, address: u16) void {
 }
 
 pub fn label(a: *Assembler, name: []const u8) Error!void {
-    return a.define(name, .{ .value = @intCast(a.pc) });
+    try a.define(name, .{ .value = @intCast(a.pc) });
+    if (!isLocal(name)) a.scope = name;
 }
 
 pub fn equ(a: *Assembler, name: []const u8, v: Value) Error!void {
@@ -284,9 +290,16 @@ fn store(a: *Assembler, b: u8) Error!void {
     a.pc += 1;
 }
 
+/// sdas reusable labels: digits followed by '$', local to the region between
+/// two ordinary labels. SDCC restarts them in every function.
+fn isLocal(name: []const u8) bool {
+    return name.len > 1 and name[name.len - 1] == '$' and std.ascii.isDigit(name[0]);
+}
+
 fn find(a: *Assembler, name: []const u8) ?*Symbol {
+    const scope = if (isLocal(name)) a.scope else "";
     for (a.symbols[0..a.symbol_count]) |*s| {
-        if (std.mem.eql(u8, s.name, name)) return s;
+        if (std.mem.eql(u8, s.name, name) and std.mem.eql(u8, s.scope, scope)) return s;
     }
     return null;
 }
@@ -295,11 +308,19 @@ fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
     if (a.find(name)) |s| {
         if (s.pass == a.pass) return a.fail("duplicate symbol '{s}'", .{name});
         if (s.known != v.known or s.value != v.value) a.changed = s.name;
-        s.* = .{ .name = s.name, .value = v.value, .known = v.known, .pass = a.pass };
+        s.value = v.value;
+        s.known = v.known;
+        s.pass = a.pass;
         return;
     }
     if (a.symbol_count == a.symbols.len) return a.fail("too many symbols (capacity {d})", .{a.symbols.len});
-    a.symbols[a.symbol_count] = .{ .name = name, .value = v.value, .known = v.known, .pass = a.pass };
+    a.symbols[a.symbol_count] = .{
+        .name = name,
+        .scope = if (isLocal(name)) a.scope else "",
+        .value = v.value,
+        .known = v.known,
+        .pass = a.pass,
+    };
     a.symbol_count += 1;
     if (a.pass > 1) a.changed = name;
 }
@@ -477,6 +498,15 @@ fn unary(a: *Assembler, l: *Line) Error!Value {
         const v = try a.unary(l);
         return .{ .value = ~v.value, .known = v.known };
     }
+    // sdas: #<x and #>x are the low and high byte of x.
+    if (l.eat(.less)) {
+        const v = try a.unary(l);
+        return .{ .value = v.value & 0xFF, .known = v.known };
+    }
+    if (l.eat(.greater)) {
+        const v = try a.unary(l);
+        return .{ .value = (v.value >> 8) & 0xFF, .known = v.known };
+    }
     return a.primary(l);
 }
 
@@ -636,6 +666,15 @@ fn operand(a: *Assembler, l: *Line) Error!Operand {
     // operand; "(2+3)*2" is an immediate.
     const start = l.pos;
     const v = try a.expression(l);
+    // sdas writes (IX+d) as "d (ix)".
+    if (l.peek().tag == .l_paren and l.peekAt(2).tag == .r_paren) {
+        if (register(l.peekAt(1).text)) |r| if (index(r)) |idx| {
+            _ = l.take();
+            _ = l.take();
+            _ = l.take();
+            return .{ .mem_index = .{ .idx = idx, .d = a.displacementOf(v) } };
+        };
+    }
     if (l.tokens[start].tag == .l_paren and l.tokens[l.pos - 1].tag == .r_paren and closes(l, start, l.pos - 1)) {
         return .{ .mem = v };
     }

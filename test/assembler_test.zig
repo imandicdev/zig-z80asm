@@ -48,6 +48,22 @@ test "SDCC syntax" {
     , &.{ 0x3E, 0x01, 0x90, 0x20, 0xFB, 0x42, 'o', 'k', 'z', 0 });
 }
 
+test "sdas index operands, low/high byte and reusable local labels" {
+    try expectBytes(
+        \\_first::
+        \\00101$:
+        \\  ld e, 4 (ix)
+        \\  ld -2 (iy), #0x0a
+        \\  jr 00101$
+        \\_second::
+        \\00101$:
+        \\  ld a, #<(_data)
+        \\  ld a, #>(_data)
+        \\  jr 00101$
+        \\_data:
+    , &.{ 0xDD, 0x5E, 0x04, 0xFD, 0x36, 0xFE, 0x0A, 0x18, 0xF7, 0x3E, 0x0F, 0x3E, 0x00, 0x18, 0xFA });
+}
+
 // 1. Range errors wait for the pass in which every value is known.
 
 test "forward references are not range-checked before they have a value" {

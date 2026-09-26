@@ -20,6 +20,7 @@ pub const cases = [_]Case{
     .{ .name = "bit_number", .source = "  BIT 8,A\n", .expect = "line 1: bit number 8 out of range 0..7" },
     .{ .name = "division_by_zero", .source = "  DB 1/0\n", .expect = "line 1: division by zero" },
     .{ .name = "undefined_symbol", .source = "  JP nowhere\n", .expect = "line 1: undefined symbol 'nowhere'" },
+    .{ .name = "local_label_other_scope", .source = "f:\n1$: NOP\ng: JR 1$\n", .expect = "line 3: undefined symbol '1$'" },
     .{ .name = "duplicate_symbol", .source = "L1: NOP\nL1: NOP\n", .expect = "line 2: duplicate symbol 'L1'" },
     .{ .name = "equ_without_label", .source = "  EQU 5\n", .expect = "line 1: EQU needs a label" },
     .{ .name = "phase_error", .source = "p1: DS 1-(p2-p1)\np2: NOP\n", .expect = "phase error: label 'p2' did not settle" },
