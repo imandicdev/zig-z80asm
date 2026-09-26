@@ -40,7 +40,12 @@ ZERO_ARG = {
     "EX AF,AF'": "ex_af", "EX DE,HL": "ex_de_hl", "EX (SP),HL": "ex_sp_hl", "LD SP,HL": "ld_sp_hl",
     "JP (HL)": "jp_hl", "IM 0": "im0", "IM 1": "im1", "IM 2": "im2", "LD I,A": "ld_i_a", "LD A,I": "ld_a_i",
     "LD A,(BC)": "ld_a_bc_ind", "LD A,(DE)": "ld_a_de_ind", "LD (BC),A": "ld_bc_ind_a", "LD (DE),A": "ld_de_ind_a",
+    "INDR": "indr", "OTDR": "otdr", "LDI": "ldi", "LDD": "ldd", "CPI": "cpi", "CPD": "cpd",
+    "INI": "ini", "IND": "ind", "OUTI": "outi", "OUTD": "outd", "RLD": "rld", "RRD": "rrd",
+    "LD R,A": "ld_r_a", "LD A,R": "ld_a_r",
 }
+ALU_IDX = {"ADD A,": "add_a_idx_d", "ADC A,": "adc_a_idx_d", "SUB ": "sub_idx_d", "SBC A,": "sbc_a_idx_d",
+           "AND ": "and_idx_d", "XOR ": "xor_idx_d", "OR ": "or_idx_d", "CP ": "cp_idx_d"}
 ALU_R = {"ADD A,": "add_a_r", "ADC A,": "adc_a_r", "SUB ": "sub_r", "SBC A,": "sbc_a_r",
          "AND ": "and_r", "XOR ": "xor_r", "OR ": "or_r", "CP ": "cp_r"}
 ALU_N = {"ADD A,": "add_a_n", "ADC A,": "adc_a_n", "SUB ": "sub_n", "SBC A,": "sbc_a_n",
@@ -165,6 +170,28 @@ def zig_call(m):
     mo = re.fullmatch(r"EX \(SP\),(IX|IY)", m)
     if mo:
         return "ex_sp_idx(.%s)" % mo.group(1).lower()
+    mo = re.fullmatch(r"LD (IX|IY),\(nn\)", m)
+    if mo:
+        return "ld_idx_nn_ind(.%s, {nn})" % mo.group(1).lower()
+    mo = re.fullmatch(r"LD \(nn\),(IX|IY)", m)
+    if mo:
+        return "ld_nn_ind_idx({nn}, .%s)" % mo.group(1).lower()
+    mo = re.fullmatch(r"(INC|DEC) (IX|IY)", m)
+    if mo:
+        return "%s_idx(.%s)" % (mo.group(1).lower(), mo.group(2).lower())
+    mo = re.fullmatch(r"(INC|DEC) \((IX|IY)\+d\)", m)
+    if mo:
+        return "%s_idx_d(.%s, {d})" % (mo.group(1).lower(), mo.group(2).lower())
+    for prefix, fn in ALU_IDX.items():
+        mo = re.fullmatch(re.escape(prefix) + r"\((IX|IY)\+d\)", m)
+        if mo:
+            return "%s(.%s, {d})" % (fn, mo.group(1).lower())
+    mo = re.fullmatch(r"(RLC|RRC|RL|RR|SLA|SRA|SRL) \((IX|IY)\+d\)", m)
+    if mo:
+        return "%s_idx_d(.%s, {d})" % (mo.group(1).lower(), mo.group(2).lower())
+    mo = re.fullmatch(r"(BIT|SET|RES) ([0-7]),\((IX|IY)\+d\)", m)
+    if mo:
+        return "%s_idx_d(%s, .%s, {d})" % (mo.group(1).lower(), mo.group(2), mo.group(3).lower())
     return None
 
 
