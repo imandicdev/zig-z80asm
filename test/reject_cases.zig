@@ -26,6 +26,7 @@ pub const cases = [_]Case{
     .{ .name = "self_referencing_ds", .source = "  DS n\nn EQU n\n", .expect = "line 1: symbol 'n' has no value" },
     .{ .name = "local_label_other_scope", .source = "f:\n1$: NOP\ng: JR 1$\n", .expect = "line 3: undefined symbol '1$'" },
     .{ .name = "duplicate_symbol", .source = "L1: NOP\nL1: NOP\n", .expect = "line 2: duplicate symbol 'L1'" },
+    .{ .name = "end_undefined_entry", .source = "  NOP\n  END start\n", .expect = "line 2: undefined symbol 'start'" },
     .{ .name = "equ_without_label", .source = "  EQU 5\n", .expect = "line 1: EQU needs a label" },
     .{ .name = "phase_error", .source = "p1: DS 1-(p2-p1)\np2: NOP\n", .expect = "phase error: label 'p2' did not settle" },
     .{ .name = "overlap", .source = "  ORG 0\n  NOP\n  ORG 0\n  NOP\n", .expect = "line 4: overlap at 0x0000: address written twice" },

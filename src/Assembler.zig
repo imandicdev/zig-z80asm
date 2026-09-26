@@ -970,7 +970,11 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
         .@".asciz" => a.asciiString(l, true),
         .dw, .defw, .@".dw", .@".word" => a.dataWords(l),
         .ds, .defs, .@".ds" => a.reserve(l),
-        .end => a.ended = true,
+        .end => {
+            // "END start" names the entry point, which a flat image does not need.
+            if (!l.atEnd()) _ = try a.expression(l);
+            a.ended = true;
+        },
         .equ => a.fail("EQU needs a label", .{}),
         .@".area", .@".globl", .@".module", .@".optsdcc" => l.pos = l.len - 1,
         else => unreachable,
