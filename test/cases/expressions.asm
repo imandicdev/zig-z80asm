@@ -1,0 +1,25 @@
+; Operators and precedence
+    ORG 0
+    DB 2+3*4
+    DB (2+3)*4
+    DB 20-4-3
+    DB 100/7
+    DB 100%7
+    DB 1<<4
+    DB 0x80>>3
+    DB 0xF0&0x3C
+    DB 0xF0|0x0F
+    DB 0xFF^0x0F
+    DB ~0xF0&0xFF
+    DB -(-5)
+    DB 1+2<<3
+    DB 6&3|8
+    DB 7^1&3
+    DW 1000*50
+    LD A,(2+3)*2
+    LD A,(5)
+    LD A,(2)+3
+    LD HL,(0x1234)
+    LD HL,(0x1000)+0x234
+    LD A,(IX+2*3-1)
+    LD (IY-(1+1)),A
