@@ -1,6 +1,9 @@
 //! Splits one source line into tokens. Problems such as a stray character or
 //! an unterminated string come back as `.invalid` / `.unterminated_string`
 //! tokens so the assembler can report them like any other error.
+//!
+//! '%' is always `.percent`: whether it is modulo or a binary prefix ("%1010")
+//! depends on where the expression parser meets it.
 
 const std = @import("std");
 
@@ -8,9 +11,6 @@ const Lexer = @This();
 
 src: []const u8,
 pos: usize = 0,
-/// Whether the previous token can end an operand. Decides if '%' is the
-/// modulo operator or a binary prefix, as in "%1010".
-after_operand: bool = false,
 
 pub const Token = struct {
     tag: Tag,
@@ -82,10 +82,7 @@ pub fn next(l: *Lexer) Token {
         '>' => if (l.eat('>')) .shift_right else .invalid,
         '"', '\'' => return l.string(c, start),
         '$' => if (l.pos < l.src.len and std.ascii.isHex(l.src[l.pos])) return l.number(start) else .dollar,
-        '%' => if (!l.after_operand and l.pos < l.src.len and (l.src[l.pos] == '0' or l.src[l.pos] == '1'))
-            return l.number(start)
-        else
-            .percent,
+        '%' => .percent,
         '0'...'9' => return l.number(start),
         else => if (isIdentStart(c)) return l.identifier(start) else .invalid,
     };
@@ -93,10 +90,6 @@ pub fn next(l: *Lexer) Token {
 }
 
 fn token(l: *Lexer, tag: Token.Tag, start: usize) Token {
-    l.after_operand = switch (tag) {
-        .identifier, .number, .string, .r_paren, .dollar => true,
-        else => false,
-    };
     return .{ .tag = tag, .text = l.src[start..l.pos], .col = start };
 }
 
@@ -137,7 +130,6 @@ fn string(l: *Lexer, quote: u8, start: usize) Token {
     while (l.pos < l.src.len and l.src[l.pos] != quote) l.pos += 1;
     if (l.pos >= l.src.len) return l.token(.unterminated_string, start);
     l.pos += 1;
-    l.after_operand = true;
     return .{ .tag = .string, .text = l.src[body .. l.pos - 1], .col = start };
 }
 
@@ -160,11 +152,6 @@ test "operators and punctuation" {
         .shift_left, .number,     .shift_right, .number,     .ampersand, .number,   .pipe,
         .number,     .caret,      .tilde,       .number,     .end,
     });
-}
-
-test "percent is binary before an operand and modulo after one" {
-    try expectTags("%101 % 3", &.{ .number, .percent, .number, .end });
-    try expectTags("7%101", &.{ .number, .percent, .number, .end });
 }
 
 test "dollar is hex before a hex digit and the current address otherwise" {

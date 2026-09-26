@@ -489,6 +489,15 @@ fn primary(a: *Assembler, l: *Line) Error!Value {
             return .{ .value = t.text[0] };
         },
         .dollar => return .{ .value = @intCast(a.statement_pc) },
+        // Where an operand is expected, '%' starts a binary number ("DB %0101").
+        .percent => {
+            const digits = l.peek();
+            if (digits.tag == .number and digits.col == t.col + 1) {
+                _ = l.take();
+                return .{ .value = parseDigits(digits.text, 2) orelse return a.fail("invalid number '%{s}'", .{digits.text}) };
+            }
+            return a.fail("expected an expression, found '%'", .{});
+        },
         .identifier => {
             if (register(t.text) != null) return a.fail("register '{s}' used in an expression", .{t.text});
             return a.symbolValue(t.text);
@@ -503,11 +512,10 @@ fn primary(a: *Assembler, l: *Line) Error!Value {
     }
 }
 
-/// 0x1F, $1F, 1Fh, %1010, 0b1010, 1010b or decimal.
+/// 0x1F, $1F, 1Fh, 0b1010, 1010b or decimal. %1010 is handled in `primary`.
 fn parseNumber(text: []const u8) ?i32 {
     if (text.len > 2 and text[0] == '0' and (text[1] == 'x' or text[1] == 'X')) return parseDigits(text[2..], 16);
     if (text.len > 1 and text[0] == '$') return parseDigits(text[1..], 16);
-    if (text.len > 1 and text[0] == '%') return parseDigits(text[1..], 2);
     const last = text[text.len - 1];
     if (text.len > 1 and (last == 'h' or last == 'H')) return parseDigits(text[0 .. text.len - 1], 16);
     if (text.len > 2 and text[0] == '0' and (text[1] == 'b' or text[1] == 'B')) return parseDigits(text[2..], 2);

@@ -17,3 +17,7 @@
     LD BC,1234h
     DB 0,255,-1,'x'
     DW 0,65535,-1
+; '%' right after a mnemonic is still a binary prefix
+    DB %00001111
+    AND %0001
+    DEFB %10000000,%1
