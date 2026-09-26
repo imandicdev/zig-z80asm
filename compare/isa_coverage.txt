@@ -1,4 +1,3 @@
 Documented opcodes: 696 (from z80_documented_opcodes.txt)
-With a z80isa.zig encoder: 696
+With an isa.zig encoder: 696
 Without an encoder: 0
-

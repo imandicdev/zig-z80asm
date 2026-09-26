@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const isa_mod = b.createModule(.{
-        .root_source_file = b.path("src/z80isa.zig"),
+        .root_source_file = b.path("src/isa.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -51,9 +51,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    isa_cmp_mod.addImport("z80isa", isa_mod);
+    isa_cmp_mod.addImport("isa", isa_mod);
     const isa_cmp = b.addTest(.{ .root_module = isa_cmp_mod });
-    const cmp_step = b.step("compare-isa", "Compare z80isa encoders against sjasmplus (run compare/gen_isa.py first)");
+    const cmp_step = b.step("compare-isa", "Compare isa.zig encoders against sjasmplus (run compare/gen_isa.py first)");
     cmp_step.dependOn(&b.addRunArtifact(isa_cmp).step);
 }
 
