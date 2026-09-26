@@ -24,10 +24,12 @@ pub const Options = struct {
     origin: u16 = 0,
 };
 
+/// A slot of the symbol hash table; an empty name marks a free slot.
 pub const Symbol = struct {
     name: []const u8,
     /// For sdas local labels such as 00101$: the label they belong to.
     scope: []const u8,
+    hash: u32,
     value: i32,
     known: bool,
     /// Pass in which the symbol was last defined; detects duplicates.
@@ -54,15 +56,19 @@ pub const Diagnostic = struct {
 
 pub const Buffers = struct {
     output: []u8,
+    /// Hash table slots. Only the largest power of two that fits is used, and
+    /// it holds at most half as many symbols as it has slots.
     symbols: []Symbol,
     diagnostics: []Diagnostic,
 };
 
-/// Fixed-capacity storage for one assembly, usable as a comptime or stack variable.
-pub fn Workspace(comptime output_size: usize, comptime symbol_count: usize, comptime diagnostic_count: usize) type {
+/// Fixed-capacity storage for one assembly, usable as a comptime or stack
+/// variable. `symbol_slots` must be a power of two; half of it is the symbol limit.
+pub fn Workspace(comptime output_size: usize, comptime symbol_slots: usize, comptime diagnostic_count: usize) type {
+    if (!std.math.isPowerOfTwo(symbol_slots)) @compileError("symbol_slots must be a power of two");
     return struct {
         output: [output_size]u8,
-        symbols: [symbol_count]Symbol,
+        symbols: [symbol_slots]Symbol,
         diagnostics: [diagnostic_count]Diagnostic,
 
         pub fn buffers(w: *@This()) Buffers {
@@ -129,12 +135,14 @@ overlap_reported: bool = false,
 /// text given to `line`, must stay valid and unchanged until `run` returns;
 /// a reused formatting buffer would rename earlier symbols.
 pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (@TypeOf(ctx), *Assembler) Error!void) Result {
+    const slots = if (buffers.symbols.len == 0) 0 else std.math.floorPowerOfTwo(usize, buffers.symbols.len);
     var a: Assembler = .{
         .options = options,
         .out = buffers.output,
-        .symbols = buffers.symbols,
+        .symbols = buffers.symbols[0..slots],
         .diagnostics = buffers.diagnostics,
     };
+    for (a.symbols) |*s| s.name = "";
     while (true) {
         a.beginPass();
         body(ctx, &a) catch {};
@@ -312,12 +320,31 @@ fn isLocal(name: []const u8) bool {
     return name.len > 1 and name[name.len - 1] == '$' and std.ascii.isDigit(name[0]);
 }
 
-fn find(a: *Assembler, name: []const u8) ?*Symbol {
-    const scope = if (isLocal(name)) a.scope else "";
-    for (a.symbols[0..a.symbol_count]) |*s| {
-        if (std.mem.eql(u8, s.name, name) and std.mem.eql(u8, s.scope, scope)) return s;
+/// FNV-1a over the name and, for local labels, the scope.
+fn hashName(name: []const u8, scope: []const u8) u32 {
+    var h: u32 = 0x811C9DC5;
+    for (name) |c| h = (h ^ c) *% 0x01000193;
+    for (scope) |c| h = (h ^ c) *% 0x01000193;
+    return h;
+}
+
+/// The slot holding `name`, or the free slot where it belongs. The table is
+/// never more than half full, so the probe always ends.
+fn slot(a: *Assembler, name: []const u8, scope: []const u8, hash: u32) *Symbol {
+    const mask = a.symbols.len - 1;
+    var i = hash & mask;
+    while (true) : (i = (i + 1) & mask) {
+        const s = &a.symbols[i];
+        if (s.name.len == 0) return s;
+        if (s.hash == hash and std.mem.eql(u8, s.name, name) and std.mem.eql(u8, s.scope, scope)) return s;
     }
-    return null;
+}
+
+fn find(a: *Assembler, name: []const u8) ?*Symbol {
+    if (a.symbol_count == 0) return null;
+    const scope = if (isLocal(name)) a.scope else "";
+    const s = a.slot(name, scope, hashName(name, scope));
+    return if (s.name.len == 0) null else s;
 }
 
 fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
@@ -329,10 +356,13 @@ fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
         s.pass = a.pass;
         return;
     }
-    if (a.symbol_count == a.symbols.len) return a.fail("too many symbols (capacity {d})", .{a.symbols.len});
-    a.symbols[a.symbol_count] = .{
+    if (a.symbol_count >= a.symbols.len / 2) return a.fail("too many symbols (capacity {d})", .{a.symbols.len / 2});
+    const scope = if (isLocal(name)) a.scope else "";
+    const hash = hashName(name, scope);
+    a.slot(name, scope, hash).* = .{
         .name = name,
-        .scope = if (isLocal(name)) a.scope else "",
+        .scope = scope,
+        .hash = hash,
         .value = v.value,
         .known = v.known,
         .pass = a.pass,

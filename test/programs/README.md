@@ -36,6 +36,7 @@ Zig 0.16.0, Windows x86_64.
 | Change | Runtime, full ROM (ReleaseFast / Debug) | Comptime, 2,528 lines | Comptime, full ROM |
 |---|---|---|---|
 | Baseline | 13.1 ms / 107.6 ms | 48 s, 720 MB | 28 min, 5 GB |
+| Symbol hash table | 5.3 ms / 46.7 ms | 45 s, 717 MB | |
 
 ## SDCC
 
