@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: zig fmt --check src test bench compare build.zig
+      - run: zig build test --summary all
+      - run: zig build
