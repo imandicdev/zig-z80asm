@@ -41,17 +41,17 @@ pub fn build(b: *std.Build) void {
     cases_tests.addImport("z80asm", mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = cases_tests })).step);
 
-    // Every reject case must fail to compile with its message; the runtime side
-    // of the same cases is checked in test/reject_test.zig.
+    // Every reject case must fail to compile with its message; test/reject_test.zig
+    // checks `cases` at runtime.
     const wf = b.addWriteFiles();
-    for (reject_cases.cases) |case| {
+    for (reject_cases.cases ++ reject_cases.comptime_only) |case| {
         const src = b.fmt(
             \\const z80 = @import("z80asm");
             \\comptime {{
-            \\    _ = z80.comptimeAssemble("{f}", .{{}});
+            \\    _ = z80.comptimeAssemble("{f}", {s});
             \\}}
             \\
-        , .{std.zig.fmtString(case.source)});
+        , .{ std.zig.fmtString(case.source), case.options });
         const case_mod = b.createModule(.{
             .root_source_file = wf.add(b.fmt("reject_{s}.zig", .{case.name}), src),
             .target = target,

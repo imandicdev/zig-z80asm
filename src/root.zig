@@ -21,29 +21,41 @@ pub const Workspace = Assembler.Workspace;
 pub const assemble = Assembler.assemble;
 pub const run = Assembler.run;
 
-/// Capacity of the comptime entry points: the whole 64 KB, 2048 symbols and
-/// 16 diagnostics.
-const ComptimeWorkspace = Workspace(0x10000, 4096, 16);
+/// Options of the comptime entry points. At runtime the buffers set the
+/// capacity instead.
+pub const ComptimeOptions = struct {
+    /// Address of the first byte when the source does not start with ORG.
+    origin: u16 = 0,
+    /// The symbol table is a hash table of a power of two slots, at most half
+    /// full, so the capacity is this rounded up to a power of two.
+    max_symbols: usize = 2048,
+    max_diagnostics: usize = 16,
+};
+
+fn ComptimeWorkspace(comptime options: ComptimeOptions) type {
+    const slots = std.math.ceilPowerOfTwoAssert(usize, @max(1, 2 * options.max_symbols));
+    return Workspace(0x10000, slots, options.max_diagnostics);
+}
 
 /// Assembles source text at compile time. Errors become compile errors.
-pub fn comptimeAssemble(comptime source: []const u8, comptime options: Options) []const u8 {
+pub fn comptimeAssemble(comptime source: []const u8, comptime options: ComptimeOptions) []const u8 {
     comptime {
         @setEvalBranchQuota(std.math.maxInt(u32));
-        var ws: ComptimeWorkspace = undefined;
-        return finish(Assembler.assemble(source, options, ws.buffers()));
+        var ws: ComptimeWorkspace(options) = undefined;
+        return finish(Assembler.assemble(source, .{ .origin = options.origin }, ws.buffers()));
     }
 }
 
 /// Runs a Zig body (see `Assembler.run`) at compile time. Errors become compile errors.
 pub fn comptimeBuild(
-    comptime options: Options,
+    comptime options: ComptimeOptions,
     comptime ctx: anytype,
     comptime body: fn (@TypeOf(ctx), *Assembler) Assembler.Error!void,
 ) []const u8 {
     comptime {
         @setEvalBranchQuota(std.math.maxInt(u32));
-        var ws: ComptimeWorkspace = undefined;
-        return finish(Assembler.run(options, ws.buffers(), ctx, body));
+        var ws: ComptimeWorkspace(options) = undefined;
+        return finish(Assembler.run(.{ .origin = options.origin }, ws.buffers(), ctx, body));
     }
 }
 

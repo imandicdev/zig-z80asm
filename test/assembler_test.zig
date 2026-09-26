@@ -53,6 +53,32 @@ test "Zig bodies may pass short and long lines to line()" {
     try std.testing.expectEqualSlices(u8, &expected, r.bytes);
 }
 
+/// "s0000 EQU 0\n" to "s(n-1) EQU n-1\n".
+fn equs(comptime n: usize) *const [n * 15]u8 {
+    comptime {
+        @setEvalBranchQuota(20 * n);
+        const pattern = "s0000 EQU 0000\n";
+        var text: [n * pattern.len]u8 = undefined;
+        for (0..n) |i| {
+            const line = text[i * pattern.len ..][0..pattern.len];
+            line.* = pattern.*;
+            var v = i;
+            for (0..4) |k| {
+                line[4 - k] = '0' + @as(u8, @intCast(v % 10));
+                line[13 - k] = line[4 - k];
+                v /= 10;
+            }
+        }
+        const done = text;
+        return &done;
+    }
+}
+
+test "the comptime symbol capacity can be raised" {
+    const image = comptime z80.comptimeAssemble(equs(2100) ++ "  DW s2099\n", .{ .max_symbols = 2100 });
+    try std.testing.expectEqualSlices(u8, &.{ 0x33, 0x08 }, image);
+}
+
 // Features that sjasmplus also accepts are checked against it in
 // test/cases_test.zig. SDCC syntax is not, so it is checked here.
 

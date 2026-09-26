@@ -6,6 +6,15 @@ pub const Case = struct {
     name: []const u8,
     source: []const u8,
     expect: []const u8,
+    /// The options of comptimeAssemble, as Zig source.
+    options: []const u8 = ".{}",
+};
+
+/// Limits set through the comptime options. The runtime takes its capacity
+/// from the buffers instead, so these are checked at comptime only.
+pub const comptime_only = [_]Case{
+    .{ .name = "symbol_capacity", .options = ".{ .max_symbols = 2 }", .source = "a: NOP\nb: NOP\nc: NOP\n", .expect = "line 3: too many symbols (capacity 2)" },
+    .{ .name = "diagnostic_capacity", .options = ".{ .max_diagnostics = 1 }", .source = "  DB 300\n  DB 301\n  DB 302\n", .expect = "(2 more)" },
 };
 
 pub const cases = [_]Case{
