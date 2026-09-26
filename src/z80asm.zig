@@ -173,6 +173,9 @@ pub const Program = struct {
                 .data => |d| pc += @intCast(d.len),
                 .org => |addr| pc = addr,
                 .label => |name| {
+                    for (labels[0..label_count]) |l| {
+                        if (strEql(l.name, name)) @compileError("duplicate label: " ++ name);
+                    }
                     labels[label_count] = .{ .name = name, .addr = pc };
                     label_count += 1;
                 },

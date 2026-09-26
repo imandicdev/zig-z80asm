@@ -174,9 +174,8 @@ const Lexer = struct {
             return self.lexIdent(line);
         }
 
-        // Unknown character - skip
-        self.advance();
-        return self.next();
+        // Unknown character: never skip it, or "2*3" would silently become "2 3".
+        @compileError(std.fmt.comptimePrint("line {d}: unexpected character '{c}'", .{ line, c }));
     }
 
     fn lexString(self: *Lexer, quote: u8, line: usize) Token {
@@ -186,46 +185,32 @@ const Lexer = struct {
             self.pos += 1;
         }
         const text = self.src[start..self.pos];
-        if (self.pos < self.src.len and self.src[self.pos] == quote) {
-            self.pos += 1; // skip closing quote
+        if (self.pos >= self.src.len or self.src[self.pos] != quote) {
+            @compileError(std.fmt.comptimePrint("line {d}: unterminated string literal", .{line}));
         }
+        self.pos += 1; // skip closing quote
         return .{ .kind = .string_lit, .text = text, .line = line };
     }
 
     fn lexNumber(self: *Lexer, line: usize) Token {
         const start = self.pos;
 
-        // 0x or 0X hex prefix
-        if (self.src[self.pos] == '0' and self.pos + 1 < self.src.len and
-            (self.src[self.pos + 1] == 'x' or self.src[self.pos + 1] == 'X'))
-        {
-            self.pos += 2;
-            while (self.pos < self.src.len and isHexDigit(self.src[self.pos])) {
-                self.pos += 1;
-            }
-            return .{ .kind = .number, .text = self.src[start..self.pos], .line = line };
+        // SDCC local label such as 00101$: decimal digits followed by '$'.
+        var end = self.pos;
+        while (end < self.src.len and isDigit(self.src[end])) end += 1;
+        if (end < self.src.len and self.src[end] == '$') {
+            self.pos = end + 1;
+            return .{ .kind = .ident, .text = self.src[start..self.pos], .line = line };
         }
 
-        // 0b or 0B binary prefix
-        if (self.src[self.pos] == '0' and self.pos + 1 < self.src.len and
-            (self.src[self.pos + 1] == 'b' or self.src[self.pos + 1] == 'B'))
-        {
-            self.pos += 2;
-            while (self.pos < self.src.len and (self.src[self.pos] == '0' or self.src[self.pos] == '1')) {
-                self.pos += 1;
-            }
-            return .{ .kind = .number, .text = self.src[start..self.pos], .line = line };
-        }
-
-        // Decimal or hex with trailing h/H (e.g. 0FFh, 42h)
-        while (self.pos < self.src.len and isHexDigit(self.src[self.pos])) {
+        // Take the whole alphanumeric run (0x1F, 0FFh, 0B8H, 0b1010, 42) and let
+        // parseNumber validate it, so malformed numbers are rejected, not truncated.
+        while (self.pos < self.src.len and isIdentChar(self.src[self.pos])) {
             self.pos += 1;
         }
-        // Check for trailing h/H
-        if (self.pos < self.src.len and (self.src[self.pos] == 'h' or self.src[self.pos] == 'H')) {
-            self.pos += 1;
-        }
-        return .{ .kind = .number, .text = self.src[start..self.pos], .line = line };
+        const text = self.src[start..self.pos];
+        _ = parseNumberAt(text, line); // validate now for a precise error location
+        return .{ .kind = .number, .text = text, .line = line };
     }
 
     fn lexIdent(self: *Lexer, line: usize) Token {
@@ -305,62 +290,45 @@ fn upperEql(s: []const u8, target: []const u8) bool {
 // ============================================================================
 
 fn parseNumber(text: []const u8) i32 {
-    if (text.len == 0) return 0;
+    return parseNumberAt(text, 0);
+}
 
+/// Strictly parse a numeric literal: 0x1F, 1FH / 0FFh, 0b1010, or decimal.
+/// Any character that is not a valid digit for the base is a compile error.
+fn parseNumberAt(text: []const u8, line: usize) i32 {
     var s = text;
+    if (s.len >= 1 and s[0] == '#') s = s[1..]; // SDCC immediate prefix
 
-    // Handle #0x prefix (SDCC style)
-    if (s.len >= 1 and s[0] == '#') s = s[1..];
-
-    // 0x hex
-    if (s.len >= 2 and s[0] == '0' and (s[1] == 'x' or s[1] == 'X')) {
-        return parseHex(s[2..]);
-    }
-
-    // 0b binary
-    if (s.len >= 2 and s[0] == '0' and (s[1] == 'b' or s[1] == 'B')) {
-        return parseBin(s[2..]);
-    }
-
-    // Trailing h/H hex (e.g., 0FFh, 42h)
-    if (s.len >= 2 and (s[s.len - 1] == 'h' or s[s.len - 1] == 'H')) {
-        return parseHex(s[0 .. s.len - 1]);
-    }
-
-    // Decimal
-    return parseDec(s);
+    if (s.len >= 2 and s[0] == '0' and (s[1] == 'x' or s[1] == 'X'))
+        return parseDigits(s[2..], 16, text, line);
+    if (s.len >= 2 and (s[s.len - 1] == 'h' or s[s.len - 1] == 'H'))
+        return parseDigits(s[0 .. s.len - 1], 16, text, line);
+    if (s.len >= 2 and s[0] == '0' and (s[1] == 'b' or s[1] == 'B'))
+        return parseDigits(s[2..], 2, text, line);
+    return parseDigits(s, 10, text, line);
 }
 
-fn parseHex(s: []const u8) i32 {
-    var val: i32 = 0;
-    for (s) |c| {
-        val = val * 16 + hexVal(c);
+fn parseDigits(digits: []const u8, base: u8, text: []const u8, line: usize) i32 {
+    if (digits.len == 0) numberError(text, line);
+    var val: i64 = 0;
+    for (digits) |c| {
+        const v: u8 = digitValue(c) orelse numberError(text, line);
+        if (v >= base) numberError(text, line);
+        val = val * base + v;
+        if (val > 0x7FFF_FFFF) @compileError(std.fmt.comptimePrint("line {d}: number too large '{s}'", .{ line, text }));
     }
-    return val;
+    return @intCast(val);
 }
 
-fn parseBin(s: []const u8) i32 {
-    var val: i32 = 0;
-    for (s) |c| {
-        val = val * 2 + @as(i32, c - '0');
-    }
-    return val;
+fn digitValue(c: u8) ?u8 {
+    if (c >= '0' and c <= '9') return c - '0';
+    if (c >= 'a' and c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' and c <= 'F') return c - 'A' + 10;
+    return null;
 }
 
-fn parseDec(s: []const u8) i32 {
-    var val: i32 = 0;
-    for (s) |c| {
-        if (c < '0' or c > '9') break;
-        val = val * 10 + @as(i32, c - '0');
-    }
-    return val;
-}
-
-fn hexVal(c: u8) i32 {
-    if (c >= '0' and c <= '9') return @as(i32, c - '0');
-    if (c >= 'a' and c <= 'f') return @as(i32, c - 'a' + 10);
-    if (c >= 'A' and c <= 'F') return @as(i32, c - 'A' + 10);
-    return 0;
+fn numberError(text: []const u8, line: usize) noreturn {
+    @compileError(std.fmt.comptimePrint("line {d}: invalid number '{s}'", .{ line, text }));
 }
 
 // ============================================================================
@@ -539,10 +507,11 @@ const Parser = struct {
                 }
                 break;
             }
-            if (self.line_token_count < MAX_TOKENS_PER_LINE) {
-                self.line_tokens[self.line_token_count] = tok;
-                self.line_token_count += 1;
+            if (self.line_token_count + 1 >= MAX_TOKENS_PER_LINE) {
+                @compileError(std.fmt.comptimePrint("line {d}: too many tokens on one line (max {d})", .{ tok.line, MAX_TOKENS_PER_LINE - 1 }));
             }
+            self.line_tokens[self.line_token_count] = tok;
+            self.line_token_count += 1;
         }
     }
 
@@ -568,8 +537,45 @@ const Parser = struct {
     fn expectComma(self: *Parser) void {
         const tok = self.nextToken();
         if (tok.kind != .comma) {
-            @compileError("expected comma");
+            self.fail("expected comma");
         }
+    }
+
+    fn expectRparen(self: *Parser) void {
+        const tok = self.nextToken();
+        if (tok.kind != .rparen) {
+            self.fail("expected ')'");
+        }
+    }
+
+    fn currentLine(self: *const Parser) usize {
+        return if (self.line_token_count > 0) self.line_tokens[0].line else self.lexer.line;
+    }
+
+    fn fail(self: *const Parser, comptime msg: []const u8) noreturn {
+        @compileError(std.fmt.comptimePrint("line {d}: {s}", .{ self.currentLine(), msg }));
+    }
+
+    /// Skip the remaining tokens of the current line (for directives that are
+    /// intentionally ignored, such as SDCC's .area / .globl / .module).
+    fn skipRestOfLine(self: *Parser) void {
+        while (!self.atEnd()) _ = self.nextToken();
+    }
+
+    /// Value as an 8-bit operand; values outside -128..255 are an error, never truncated.
+    fn imm8(self: *const Parser, v: i32) u8 {
+        if (v < -128 or v > 255) {
+            @compileError(std.fmt.comptimePrint("line {d}: value {d} does not fit in 8 bits", .{ self.currentLine(), v }));
+        }
+        return @truncate(@as(u32, @bitCast(v)));
+    }
+
+    /// Value as a 16-bit operand; values outside -32768..65535 are an error, never truncated.
+    fn imm16(self: *const Parser, v: i32) u16 {
+        if (v < -32768 or v > 65535) {
+            @compileError(std.fmt.comptimePrint("line {d}: value {d} does not fit in 16 bits", .{ self.currentLine(), v }));
+        }
+        return @truncate(@as(u32, @bitCast(v)));
     }
 
     // Parse a complete operand from current token position
@@ -587,10 +593,9 @@ const Parser = struct {
             return self.parseImmediate();
         }
 
-        // $ -- current PC
+        // $ -- current PC (needs the expression evaluator; reject rather than emit 0)
         if (tok.kind == .dollar) {
-            _ = self.nextToken();
-            return .{ .kind = .imm16, .imm = 0, .label = "$" };
+            self.fail("'$' (current address) is not supported yet");
         }
 
         // Number
@@ -657,23 +662,23 @@ const Parser = struct {
 
             if (reg == .hl) {
                 // (HL)
-                _ = self.nextToken(); // consume )
+                self.expectRparen();
                 return .{ .kind = .indirect_hl, .reg = .hl_ind };
             }
 
             if (reg == .bc) {
-                _ = self.nextToken(); // consume )
+                self.expectRparen();
                 return .{ .kind = .indirect_bc, .reg = .bc };
             }
 
             if (reg == .de) {
-                _ = self.nextToken(); // consume )
+                self.expectRparen();
                 return .{ .kind = .indirect_de, .reg = .de };
             }
 
             if (reg == .c) {
                 // (C) -- for IN/OUT
-                _ = self.nextToken(); // consume )
+                self.expectRparen();
                 return .{ .kind = .indirect_c };
             }
 
@@ -682,29 +687,32 @@ const Parser = struct {
                 // Check for +d or -d
                 const next_tok = self.peekToken();
                 if (next_tok.kind == .plus or next_tok.kind == .minus) {
-                    const sign: i8 = if (next_tok.kind == .minus) -1 else 1;
+                    const negative = next_tok.kind == .minus;
                     _ = self.nextToken(); // consume + or -
-                    const num_tok = self.nextToken(); // number
-                    const d: i8 = @intCast(sign * @as(i8, @intCast(parseNumber(num_tok.text))));
-                    _ = self.nextToken(); // consume )
-                    return .{ .kind = .indirect_idx, .idx = idx, .displacement = d };
+                    const num_tok = self.nextToken();
+                    if (num_tok.kind != .number) self.fail("index displacement must be a number (expressions are not supported yet)");
+                    const magnitude = parseNumber(num_tok.text);
+                    const d: i32 = if (negative) -magnitude else magnitude;
+                    if (d < -128 or d > 127) self.fail("index displacement out of range -128..127");
+                    self.expectRparen();
+                    return .{ .kind = .indirect_idx, .idx = idx, .displacement = @intCast(d) };
                 }
                 // (IX) with no displacement means (IX+0)
-                _ = self.nextToken(); // consume )
+                self.expectRparen();
                 return .{ .kind = .indirect_idx, .idx = idx, .displacement = 0 };
             }
 
             // (SP) -- used by EX (SP), HL; or any other register not
             // having a dedicated indirect form.
             // Also handles identifiers that aren't registers at all.
-            _ = self.nextToken(); // consume )
+            self.expectRparen();
             return .{ .kind = .indirect_nn, .label = tok.text };
         }
 
         if (tok.kind == .number) {
             _ = self.nextToken();
             const val = parseNumber(tok.text);
-            _ = self.nextToken(); // consume )
+            self.expectRparen();
             return .{ .kind = .indirect_nn, .imm = val };
         }
 
@@ -712,8 +720,9 @@ const Parser = struct {
         if (tok.kind == .hash) {
             _ = self.nextToken(); // consume #
             const num_tok = self.nextToken();
+            if (num_tok.kind != .number) self.fail("expected a number after '#'");
             const val = parseNumber(num_tok.text);
-            _ = self.nextToken(); // consume )
+            self.expectRparen();
             return .{ .kind = .indirect_nn, .imm = val };
         }
 
@@ -776,7 +785,18 @@ const Parser = struct {
         // SDCC-style label without colon: identifier at column 0 that ends with :
         // Already handled above. Also handle label with :: at end of ident text
 
+        if (first.kind != .ident) {
+            @compileError(std.fmt.comptimePrint("line {d}: expected a label or mnemonic, found '{s}'", .{ first.line, first.text }));
+        }
+
         self.parseInstruction();
+
+        // Everything on the line must have been consumed; leftovers mean the
+        // parser did not understand part of the statement (e.g. "LD A,2+3").
+        if (!self.atEnd()) {
+            const extra = self.peekToken();
+            @compileError(std.fmt.comptimePrint("line {d}: unexpected '{s}' (expressions are not supported yet)", .{ extra.line, extra.text }));
+        }
     }
 
     fn qualifyLabel(_: *const Parser, name: []const u8) []const u8 {
@@ -788,7 +808,7 @@ const Parser = struct {
 
     fn parseInstruction(self: *Parser) void {
         const mnemonic_tok = self.nextToken();
-        if (mnemonic_tok.kind != .ident) return;
+        if (mnemonic_tok.kind != .ident) self.fail("expected a mnemonic");
 
         const mnem = mnemonic_tok.text;
 
@@ -860,14 +880,14 @@ const Parser = struct {
         if (upperEql(mnem, "ORG")) { self.parseDotOrg(); return; }
         if (upperEql(mnem, "DB") or upperEql(mnem, "DEFB")) { self.parseDotDb(); return; }
         if (upperEql(mnem, "DW") or upperEql(mnem, "DEFW")) { self.parseDotDw(); return; }
-        if (upperEql(mnem, "EQU")) { return; } // ignore for now
+        if (upperEql(mnem, "EQU")) self.fail("EQU is not supported yet");
         if (upperEql(mnem, "DS") or upperEql(mnem, "DEFS")) { self.parseDotFill(); return; }
 
         // SDCC-specific directives we can skip
         if (upperEql(mnem, "MODULE") or upperEql(mnem, "OPTSDCC") or
             upperEql(mnem, "GLOBL") or upperEql(mnem, "AREA"))
         {
-            // Skip rest of line (already consumed by readLine)
+            self.skipRestOfLine();
             return;
         }
 
@@ -885,12 +905,13 @@ const Parser = struct {
         if (upperEql(mnem, ".ASCII")) { self.parseDotAscii(false); return; }
         if (upperEql(mnem, ".ASCIZ")) { self.parseDotAscii(true); return; }
         if (upperEql(mnem, ".FILL") or upperEql(mnem, ".DS")) { self.parseDotFill(); return; }
-        if (upperEql(mnem, ".EQU")) { return; } // skip
+        if (upperEql(mnem, ".EQU")) self.fail(".equ is not supported yet");
 
         // SDCC directives we can ignore
         if (upperEql(mnem, ".MODULE") or upperEql(mnem, ".OPTSDCC") or
             upperEql(mnem, ".GLOBL") or upperEql(mnem, ".AREA"))
         {
+            self.skipRestOfLine();
             return;
         }
 
@@ -900,7 +921,7 @@ const Parser = struct {
     fn parseDotOrg(self: *Parser) void {
         const op = self.parseOperand();
         if (op.kind == .imm8 or op.kind == .imm16) {
-            self.program.org(@intCast(op.imm));
+            self.program.org(self.imm16(op.imm));
         } else {
             @compileError(".org requires a numeric address");
         }
@@ -911,11 +932,12 @@ const Parser = struct {
             const tok = self.peekToken();
             if (tok.kind == .number) {
                 _ = self.nextToken();
-                self.program.raw(isa.db(@intCast(parseNumber(tok.text))));
+                self.program.raw(isa.db(self.imm8(parseNumber(tok.text))));
             } else if (tok.kind == .hash) {
                 _ = self.nextToken();
                 const num_tok = self.nextToken();
-                self.program.raw(isa.db(@intCast(parseNumber(num_tok.text))));
+                if (num_tok.kind != .number) self.fail("expected a number after '#'");
+                self.program.raw(isa.db(self.imm8(parseNumber(num_tok.text))));
             } else if (tok.kind == .string_lit) {
                 _ = self.nextToken();
                 self.program.data(tok.text);
@@ -935,17 +957,15 @@ const Parser = struct {
             const tok = self.peekToken();
             if (tok.kind == .number) {
                 _ = self.nextToken();
-                self.program.raw(isa.dw(@intCast(parseNumber(tok.text))));
+                self.program.raw(isa.dw(self.imm16(parseNumber(tok.text))));
             } else if (tok.kind == .hash) {
                 _ = self.nextToken();
                 const num_tok = self.nextToken();
-                self.program.raw(isa.dw(@intCast(parseNumber(num_tok.text))));
+                if (num_tok.kind != .number) self.fail("expected a number after '#'");
+                self.program.raw(isa.dw(self.imm16(parseNumber(num_tok.text))));
             } else if (tok.kind == .ident) {
-                // Label reference as word -- emit placeholder dw(0).
-                // Full label-in-dw resolution would require extending z80asm.zig's
-                // Insn union. For now, .dw with a label emits zero.
-                _ = self.nextToken();
-                self.program.raw(isa.dw(0));
+                // Used to emit a placeholder 0 -- silently wrong. Reject until labels in DW are supported.
+                self.fail("DW with a label is not supported yet");
             } else {
                 break;
             }
@@ -971,12 +991,14 @@ const Parser = struct {
 
     fn parseDotFill(self: *Parser) void {
         const count_tok = self.nextToken();
-        const count: usize = @intCast(parseNumber(count_tok.text));
+        if (count_tok.kind != .number) self.fail("DS/.fill count must be a number");
+        const count: usize = self.imm16(parseNumber(count_tok.text));
         var fill_val: u8 = 0;
         if (self.peekToken().kind == .comma) {
             _ = self.nextToken();
             const val_tok = self.nextToken();
-            fill_val = @intCast(parseNumber(val_tok.text));
+            if (val_tok.kind != .number) self.fail("DS/.fill value must be a number");
+            fill_val = self.imm8(parseNumber(val_tok.text));
         }
         // Emit 'count' bytes of fill_val
         for (0..count) |_| {
@@ -1011,20 +1033,20 @@ const Parser = struct {
         // LD r8, n
         if (dst.kind == .reg8 and (src.kind == .imm8 or src.kind == .imm16)) {
             const d = regToR8(dst.reg).?;
-            self.program.raw(isa.ld_r_n(d, @intCast(@as(u32, @bitCast(src.imm)) & 0xFF)));
+            self.program.raw(isa.ld_r_n(d, self.imm8(src.imm)));
             return;
         }
 
         // LD (HL), n
         if (dst.kind == .indirect_hl and (src.kind == .imm8 or src.kind == .imm16)) {
-            self.program.raw(isa.ld_hl_ind_n(@intCast(@as(u32, @bitCast(src.imm)) & 0xFF)));
+            self.program.raw(isa.ld_hl_ind_n(self.imm8(src.imm)));
             return;
         }
 
         // LD r16, nn
         if (dst.kind == .reg16 and (src.kind == .imm8 or src.kind == .imm16)) {
             const d = regToR16(dst.reg).?;
-            self.program.raw(isa.ld_rr_nn(d, @intCast(@as(u32, @bitCast(src.imm)) & 0xFFFF)));
+            self.program.raw(isa.ld_rr_nn(d, self.imm16(src.imm)));
             return;
         }
 
@@ -1037,7 +1059,7 @@ const Parser = struct {
 
         // LD IX/IY, nn
         if (dst.kind == .reg_idx and (src.kind == .imm8 or src.kind == .imm16)) {
-            self.program.raw(isa.ld_idx_nn(dst.idx.?, @intCast(@as(u32, @bitCast(src.imm)) & 0xFFFF)));
+            self.program.raw(isa.ld_idx_nn(dst.idx.?, self.imm16(src.imm)));
             return;
         }
 
@@ -1079,7 +1101,7 @@ const Parser = struct {
 
         // LD A, (nn)
         if (dst.kind == .reg8 and dst.reg == .a and src.kind == .indirect_nn and src.label.len == 0) {
-            self.program.raw(isa.ld_a_nn_ind(@intCast(@as(u32, @bitCast(src.imm)) & 0xFFFF)));
+            self.program.raw(isa.ld_a_nn_ind(self.imm16(src.imm)));
             return;
         }
 
@@ -1092,7 +1114,7 @@ const Parser = struct {
 
         // LD (nn), A
         if (dst.kind == .indirect_nn and dst.label.len == 0 and src.kind == .reg8 and src.reg == .a) {
-            self.program.raw(isa.ld_nn_ind_a(@intCast(@as(u32, @bitCast(dst.imm)) & 0xFFFF)));
+            self.program.raw(isa.ld_nn_ind_a(self.imm16(dst.imm)));
             return;
         }
 
@@ -1104,7 +1126,7 @@ const Parser = struct {
 
         // LD HL, (nn)
         if (dst.kind == .reg16 and dst.reg == .hl and src.kind == .indirect_nn and src.label.len == 0) {
-            self.program.raw(isa.ld_hl_nn_ind(@intCast(@as(u32, @bitCast(src.imm)) & 0xFFFF)));
+            self.program.raw(isa.ld_hl_nn_ind(self.imm16(src.imm)));
             return;
         }
 
@@ -1116,7 +1138,7 @@ const Parser = struct {
 
         // LD (nn), HL
         if (dst.kind == .indirect_nn and dst.label.len == 0 and src.kind == .reg16 and src.reg == .hl) {
-            self.program.raw(isa.ld_nn_ind_hl(@intCast(@as(u32, @bitCast(dst.imm)) & 0xFFFF)));
+            self.program.raw(isa.ld_nn_ind_hl(self.imm16(dst.imm)));
             return;
         }
 
@@ -1129,14 +1151,14 @@ const Parser = struct {
         // LD rr, (nn) -- ED prefix for BC, DE, SP
         if (dst.kind == .reg16 and src.kind == .indirect_nn and src.label.len == 0) {
             const d = regToR16(dst.reg).?;
-            self.program.raw(isa.ld_rr_nn_ind(d, @intCast(@as(u32, @bitCast(src.imm)) & 0xFFFF)));
+            self.program.raw(isa.ld_rr_nn_ind(d, self.imm16(src.imm)));
             return;
         }
 
         // LD (nn), rr
         if (dst.kind == .indirect_nn and dst.label.len == 0 and src.kind == .reg16) {
             const s = regToR16(src.reg).?;
-            self.program.raw(isa.ld_nn_ind_rr(@intCast(@as(u32, @bitCast(dst.imm)) & 0xFFFF), s));
+            self.program.raw(isa.ld_nn_ind_rr(self.imm16(dst.imm), s));
             return;
         }
 
@@ -1156,7 +1178,7 @@ const Parser = struct {
 
         // LD (IX+d), n / (IY+d), n
         if (dst.kind == .indirect_idx and (src.kind == .imm8 or src.kind == .imm16)) {
-            self.program.raw(isa.ld_idx_d_n(dst.idx.?, dst.displacement, @intCast(@as(u32, @bitCast(src.imm)) & 0xFF)));
+            self.program.raw(isa.ld_idx_d_n(dst.idx.?, dst.displacement, self.imm8(src.imm)));
             return;
         }
 
@@ -1343,7 +1365,7 @@ const Parser = struct {
         }
 
         if (src.kind == .imm8 or src.kind == .imm16) {
-            const n: u8 = @intCast(@as(u32, @bitCast(src.imm)) & 0xFF);
+            const n: u8 = self.imm8(src.imm);
             switch (op) {
                 0 => self.program.raw(isa.add_a_n(n)),
                 1 => self.program.raw(isa.adc_a_n(n)),
@@ -1453,7 +1475,7 @@ const Parser = struct {
 
         // JP nn
         if (first.kind == .imm8 or first.kind == .imm16) {
-            self.program.raw(isa.jp(@intCast(@as(u32, @bitCast(first.imm)) & 0xFFFF)));
+            self.program.raw(isa.jp(self.imm16(first.imm)));
             return;
         }
 
@@ -1470,7 +1492,7 @@ const Parser = struct {
                     return;
                 }
                 if (target.kind == .imm8 or target.kind == .imm16) {
-                    self.program.raw(isa.jp_cc(cond, @intCast(@as(u32, @bitCast(target.imm)) & 0xFFFF)));
+                    self.program.raw(isa.jp_cc(cond, self.imm16(target.imm)));
                     return;
                 }
                 @compileError("JP cc requires address or label");
@@ -1489,10 +1511,11 @@ const Parser = struct {
     fn parseJr(self: *Parser) void {
         const first = self.parseOperand();
 
-        // JR offset (numeric)
+        // A numeric JR operand is a target address in Zilog and SDCC syntax, not a raw
+        // offset. It used to be emitted as an offset (wrong bytes); reject until the
+        // address-to-offset conversion exists.
         if (first.kind == .imm8 or first.kind == .imm16) {
-            self.program.raw(isa.jr(@intCast(first.imm)));
-            return;
+            self.fail("JR with a numeric target is not supported yet; use a label");
         }
 
         // Check for condition code BEFORE treating as label.
@@ -1506,10 +1529,9 @@ const Parser = struct {
                     return;
                 }
                 if (target.kind == .imm8 or target.kind == .imm16) {
-                    self.program.raw(isa.jr_cc(cond, @intCast(target.imm)));
-                    return;
+                    self.fail("JR cc with a numeric target is not supported yet; use a label");
                 }
-                @compileError("JR cc requires offset or label");
+                @compileError("JR cc requires a label");
             }
         }
 
@@ -1527,7 +1549,7 @@ const Parser = struct {
 
         // CALL nn
         if (first.kind == .imm8 or first.kind == .imm16) {
-            self.program.raw(isa.call(@intCast(@as(u32, @bitCast(first.imm)) & 0xFFFF)));
+            self.program.raw(isa.call(self.imm16(first.imm)));
             return;
         }
 
@@ -1542,7 +1564,7 @@ const Parser = struct {
                     return;
                 }
                 if (target.kind == .imm8 or target.kind == .imm16) {
-                    self.program.raw(isa.call_cc(cond, @intCast(@as(u32, @bitCast(target.imm)) & 0xFFFF)));
+                    self.program.raw(isa.call_cc(cond, self.imm16(target.imm)));
                     return;
                 }
                 @compileError("CALL cc requires address or label");
@@ -1594,17 +1616,17 @@ const Parser = struct {
             return;
         }
         if (target.kind == .imm8 or target.kind == .imm16) {
-            self.program.raw(isa.djnz(@intCast(target.imm)));
-            return;
+            self.fail("DJNZ with a numeric target is not supported yet; use a label");
         }
-        @compileError("DJNZ requires label or offset");
+        @compileError("DJNZ requires a label");
     }
 
     fn parseRst(self: *Parser) void {
         const op = self.parseOperand();
         if (op.kind == .imm8 or op.kind == .imm16) {
-            const n: u8 = @intCast(@as(u32, @bitCast(op.imm)) & 0xFF);
+            const n: u8 = self.imm8(op.imm);
             // RST n encodes as C7 | n, where n is 0x00, 0x08, 0x10, ..., 0x38
+            if (n & 0xC7 != 0) self.fail("RST target must be one of 0x00, 0x08, ..., 0x38");
             self.program.raw(isa.rst(n));
             return;
         }
@@ -1673,7 +1695,7 @@ const Parser = struct {
             self.expectComma();
             const src = self.parseOperand();
             if (src.kind == .indirect_nn and src.label.len == 0) {
-                self.program.raw(isa.in_a_n(@intCast(@as(u32, @bitCast(src.imm)) & 0xFF)));
+                self.program.raw(isa.in_a_n(self.imm8(src.imm)));
                 return;
             }
             if (src.kind == .indirect_c) {
@@ -1705,7 +1727,7 @@ const Parser = struct {
             self.expectComma();
             const src = self.parseOperand();
             if (src.kind == .reg8 and src.reg == .a) {
-                self.program.raw(isa.out_n_a(@intCast(@as(u32, @bitCast(first.imm)) & 0xFF)));
+                self.program.raw(isa.out_n_a(self.imm8(first.imm)));
                 return;
             }
             @compileError("OUT (n) requires A as source");
@@ -2492,11 +2514,15 @@ test "SDCC tty.asm core instructions" {
     try expect(code[13] == 0xE1);
     // INC HL = 23
     try expect(code[14] == 0x23);
-    // JR 00101$ -- relative jump back
+    // JR 00101$ -- relative jump back from 0x0011 to 0x0006 = -11
     try expect(code[15] == 0x18);
+    try expect(code[16] == 0xF5);
 
     // _tty_getc / 00102$: XOR A, A = AF
     try expect(code[17] == 0xAF);
+    // JR Z, 00102$ -- from 0x0018 back to 0x0011 = -7
+    try expect(code[22] == 0x28);
+    try expect(code[23] == 0xF9);
 }
 
 test "ascii and asciz directives" {
