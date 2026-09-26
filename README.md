@@ -6,12 +6,18 @@ errors are compile errors, and at runtime, where errors come back as data.
 It needs no allocator and does no I/O: the caller provides the output,
 symbol and diagnostic buffers.
 
-Source text and Zig calls go through the same path, so a program can be
-written in assembly, built from Zig code, or both.
+## Why
 
-Requires Zig 0.16.0.
+Zig's comptime can run ordinary Zig code during compilation, so this
+library turns the Zig compiler into a cross-assembler for a CPU it has no
+backend for. A Z80 program is built by `zig build` with no external
+assembler and no extra build step. Addresses, tables and constants are
+defined once and shared between the Z80 code and the host tools, and a
+mistake such as a jump out of range or an overlapping write stops the build.
 
 ## Use
+
+Requires Zig 0.16.0.
 
 ```
 zig fetch --save git+https://github.com/imandicdev/zig-z80asm#v0.1.0
@@ -62,18 +68,24 @@ must be a power of two; half of it is the symbol capacity.
 
 ### From Zig code
 
-A body gets an `*Assembler` and can mix instruction calls from `z80.isa` with
-source lines:
+Source text and Zig calls go through the same path, so a program can be
+written in assembly, built from Zig code, or both. A body gets an
+`*Assembler` and can mix instruction calls from `z80.isa` with source lines.
+Here a DJNZ loop runs `ADD A,3` B times and stores the result:
 
 ```zig
 fn program(_: void, a: *z80.Assembler) z80.Assembler.Error!void {
     a.org(0x8000);
+    try a.line("times EQU 5");
+    try a.line("  LD B,times");
+    try a.emit(z80.isa.aluR(.xor, .a)); // A = 0
     try a.label("loop");
-    try a.emit(z80.isa.ldRrNn(.hl, try a.word("msg")));
+    try a.emit(z80.isa.aluN(.add, 3)); // runs B times
     try a.line("  DJNZ loop");
-    try a.emit(z80.isa.jr(try a.relative("loop")));
-    try a.label("msg");
-    try a.bytes("ok");
+    try a.emit(z80.isa.ldMemA(try a.word("result")));
+    try a.emit(z80.isa.ret());
+    try a.label("result");
+    try a.bytes(&.{0});
 }
 
 const image = z80.comptimeBuild(.{}, {}, program);
@@ -101,8 +113,7 @@ needs for sdasz80.
   undocumented ones: SLL (also SLI), IXH/IXL/IYH/IYL, `IN F,(C)` / `IN (C)`
   and `OUT (C),0`.
 - Numbers: `42`, `0x2A`, `$2A`, `2Ah`, `0b101010`, `101010b`, `%101010`,
-  `'*'`. `#2A` is hex as in sjasmplus; `#` followed by digits only, such as
-  `#4000`, is rejected, because SDCC reads it as decimal.
+  `#2A`, `'*'`.
 - Expressions: `+ - * / %`, `& | ^ ~`, `<< >>`, parentheses, `$` for the
   address of the current statement, and SDCC's `#<x` and `#>x` for the low
   and high byte. Precedence from lowest: `|`, `^`, `&`, shifts, `+ -`,
@@ -115,9 +126,23 @@ needs for sdasz80.
   `.org .db .byte .dw .word .ds .ascii .asciz .area .globl .module .optsdcc`.
 - Strings: sjasmplus escapes in `"..."`, `''` for a quote inside `'...'`.
 
-The output is a memory image from the lowest to the highest address
-written, with zeros in the gaps. Writing an address twice is an error.
-Forward references are resolved in up to 8 passes.
+Writing an address twice is an error. Forward references are resolved in up
+to 8 passes.
+
+## Differences from sjasmplus
+
+Three, all deliberate:
+
+- The output is a memory image from the lowest to the highest address
+  written. Gaps between ORGs are zeros, and code after an ORG below earlier
+  code goes to its own address. sjasmplus `--raw` writes the bytes in the
+  order they are assembled and leaves the gaps out.
+- `#` is a hex prefix only where SDCC cannot read the number as decimal:
+  `#2A` and `#FF` are hex, `#5` is 5 either way, and `#4000` is an error
+  instead of 0x4000. Otherwise `#` is SDCC's immediate marker, as in
+  `#0x0a` or `#_table`.
+- DB and DW take any number of values; sjasmplus stops at 128 bytes in one
+  DB and 128 values in one DW.
 
 ## Not in 0.1
 
@@ -174,6 +199,13 @@ variables, and the scripts check the versions:
 `python compare/gen_refs.py --sjasmplus PATH` regenerates `test/cases/*.bin`.
 `zig build programs -Dthirdparty=DIR` assembles the known programs, which
 are not in this repository; see [test/programs/README.md](test/programs/README.md).
+
+## Authorship
+
+Design and architecture are mine; parts of the implementation were written
+with LLM assistance. Every instruction encoding is verified byte-for-byte
+against sjasmplus, the documented ones also against z88dk z80asm, and the
+full ZX Spectrum 48K ROM rebuilds byte-identical at comptime and at runtime.
 
 ## License
 
