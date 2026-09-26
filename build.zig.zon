@@ -7,5 +7,9 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        // build.zig imports it to generate the reject tests.
+        "test/reject_cases.zig",
+        "LICENSE",
+        "README.md",
     },
 }
