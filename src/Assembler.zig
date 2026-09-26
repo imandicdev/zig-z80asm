@@ -7,6 +7,7 @@
 //! their value in the next pass, so forward references work in both styles.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const isa = @import("isa.zig");
 const Lexer = @import("Lexer.zig");
 const Token = Lexer.Token;
@@ -16,6 +17,11 @@ const Assembler = @This();
 pub const max_passes = 8;
 pub const max_line_tokens = 64;
 pub const message_capacity = 120;
+
+/// Tokens point into temporary copies of source lines. In tests and Debug
+/// builds each copy is overwritten with 0xAA after its line, so a name that
+/// was kept without going through `kept` turns into garbage and fails a test.
+const poison_copies = builtin.is_test or builtin.mode == .Debug;
 
 pub const Error = error{AssemblyFailed};
 
@@ -187,6 +193,7 @@ fn assembleLines(source: []const u8, a: *Assembler) Error!void {
         number += 1;
         a.line_number = number;
         a.assembleLine(source[start..end], copy orelse source[start..end]) catch {};
+        if (poison_copies) if (copy) |c| @memset(c, 0xAA);
         start = end + 1;
     }
     a.line_number = 0;
@@ -206,7 +213,7 @@ const LineReader = struct {
     /// The line that starts at `start`, as a slice of the buffer, or null when
     /// it is longer than the buffer. `end` gets the offset of its '\n' or the
     /// end of the source.
-    fn line(r: *LineReader, start: usize, end: *usize) ?[]const u8 {
+    fn line(r: *LineReader, start: usize, end: *usize) ?[]u8 {
         while (true) {
             if (start >= r.buf_start and start <= r.buf_start + r.buf_len) {
                 const from = start - r.buf_start;
@@ -995,6 +1002,7 @@ pub fn line(a: *Assembler, text: []const u8) Error!void {
     var buf: [256]u8 = undefined;
     if (text.len > buf.len) return a.assembleLine(text, text);
     @memcpy(buf[0..text.len], text);
+    defer if (poison_copies) @memset(buf[0..text.len], 0xAA);
     return a.assembleLine(text, buf[0..text.len]);
 }
 

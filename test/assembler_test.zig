@@ -41,11 +41,12 @@ test "lines longer than the read buffer and labels used across buffer refills" {
 
 fn longLines(_: void, a: *Assembler) Assembler.Error!void {
     try a.line("start: NOP ; " ++ "y" ** 300);
-    try a.line("  JP start ; " ++ "z" ** 300);
+    try a.line("short: JP start");
+    try a.line("  JP short ; " ++ "z" ** 300);
 }
 
-test "Zig bodies may pass lines longer than the copy buffer" {
-    const expected = [_]u8{ 0x00, 0xC3, 0x00, 0x00 };
+test "Zig bodies may pass short and long lines to line()" {
+    const expected = [_]u8{ 0x00, 0xC3, 0x00, 0x00, 0xC3, 0x01, 0x00 };
     try std.testing.expectEqualSlices(u8, &expected, comptime z80.comptimeBuild(.{}, {}, longLines));
     const r = z80.run(.{}, workspace.buffers(), {}, longLines);
     try expectOk(r);
