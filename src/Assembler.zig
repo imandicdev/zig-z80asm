@@ -124,6 +124,10 @@ overlap_reported: bool = false,
 /// Runs `body(ctx, assembler)` once per pass until every symbol has a stable
 /// value. The body is executed several times, so it must not have side effects
 /// outside the assembler: it has to do the same thing on every call.
+///
+/// Symbol names are not copied. The names given to `label` and `equ`, and the
+/// text given to `line`, must stay valid and unchanged until `run` returns;
+/// a reused formatting buffer would rename earlier symbols.
 pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (@TypeOf(ctx), *Assembler) Error!void) Result {
     var a: Assembler = .{
         .options = options,
@@ -216,12 +220,14 @@ pub fn org(a: *Assembler, address: u16) void {
     a.pc = address;
 }
 
+/// `name` is kept, not copied; see `run`.
 pub fn label(a: *Assembler, name: []const u8) Error!void {
     try a.checkArea();
     try a.define(name, .{ .value = @intCast(a.pc) });
     if (!isLocal(name)) a.scope = name;
 }
 
+/// `name` is kept, not copied; see `run`.
 pub fn equ(a: *Assembler, name: []const u8, v: Value) Error!void {
     return a.define(name, v);
 }
@@ -859,7 +865,8 @@ fn keyword(name: []const u8) ?Keyword {
     return std.meta.stringToEnum(Keyword, std.ascii.lowerString(&buf, name));
 }
 
-/// Assembles one line of source text.
+/// Assembles one line of source text. Labels defined on the line keep
+/// pointing into `text`; see `run`.
 pub fn line(a: *Assembler, text: []const u8) Error!void {
     a.statement_pc = a.pc;
     var l = try a.tokenize(text);
