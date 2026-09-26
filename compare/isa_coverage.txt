@@ -1,0 +1,108 @@
+Documented opcodes: 696 (from z80_documented_opcodes.txt)
+With a z80isa.zig encoder: 592
+Without an encoder: 104
+
+  ADC A,(IX+d)
+  ADC A,(IY+d)
+  ADD A,(IX+d)
+  ADD A,(IY+d)
+  AND (IX+d)
+  AND (IY+d)
+  BIT 0,(IX+d)
+  BIT 0,(IY+d)
+  BIT 1,(IX+d)
+  BIT 1,(IY+d)
+  BIT 2,(IX+d)
+  BIT 2,(IY+d)
+  BIT 3,(IX+d)
+  BIT 3,(IY+d)
+  BIT 4,(IX+d)
+  BIT 4,(IY+d)
+  BIT 5,(IX+d)
+  BIT 5,(IY+d)
+  BIT 6,(IX+d)
+  BIT 6,(IY+d)
+  BIT 7,(IX+d)
+  BIT 7,(IY+d)
+  CP (IX+d)
+  CP (IY+d)
+  CPD
+  CPI
+  DEC (IX+d)
+  DEC (IY+d)
+  DEC IX
+  DEC IY
+  INC (IX+d)
+  INC (IY+d)
+  INC IX
+  INC IY
+  IND
+  INDR
+  INI
+  LD (nn),IX
+  LD (nn),IY
+  LD A,R
+  LD IX,(nn)
+  LD IY,(nn)
+  LD R,A
+  LDD
+  LDI
+  OR (IX+d)
+  OR (IY+d)
+  OTDR
+  OUTD
+  OUTI
+  RES 0,(IX+d)
+  RES 0,(IY+d)
+  RES 1,(IX+d)
+  RES 1,(IY+d)
+  RES 2,(IX+d)
+  RES 2,(IY+d)
+  RES 3,(IX+d)
+  RES 3,(IY+d)
+  RES 4,(IX+d)
+  RES 4,(IY+d)
+  RES 5,(IX+d)
+  RES 5,(IY+d)
+  RES 6,(IX+d)
+  RES 6,(IY+d)
+  RES 7,(IX+d)
+  RES 7,(IY+d)
+  RL (IX+d)
+  RL (IY+d)
+  RLC (IX+d)
+  RLC (IY+d)
+  RLD
+  RR (IX+d)
+  RR (IY+d)
+  RRC (IX+d)
+  RRC (IY+d)
+  RRD
+  SBC A,(IX+d)
+  SBC A,(IY+d)
+  SET 0,(IX+d)
+  SET 0,(IY+d)
+  SET 1,(IX+d)
+  SET 1,(IY+d)
+  SET 2,(IX+d)
+  SET 2,(IY+d)
+  SET 3,(IX+d)
+  SET 3,(IY+d)
+  SET 4,(IX+d)
+  SET 4,(IY+d)
+  SET 5,(IX+d)
+  SET 5,(IY+d)
+  SET 6,(IX+d)
+  SET 6,(IY+d)
+  SET 7,(IX+d)
+  SET 7,(IY+d)
+  SLA (IX+d)
+  SLA (IY+d)
+  SRA (IX+d)
+  SRA (IY+d)
+  SRL (IX+d)
+  SRL (IY+d)
+  SUB (IX+d)
+  SUB (IY+d)
+  XOR (IX+d)
+  XOR (IY+d)

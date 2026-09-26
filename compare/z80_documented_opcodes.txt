@@ -1,0 +1,796 @@
+================================================================================
+                    Z80 DOCUMENTED OPCODES — COMPLETE REFERENCE
+================================================================================
+
+Legend:
+  n    = 8-bit immediate
+  nn   = 16-bit immediate (low byte first)
+  d    = signed 8-bit displacement (-128 to +127)
+  e    = signed 8-bit relative offset
+  b    = bit number (0-7)
+  r    = register (B,C,D,E,H,L,A)
+  (HL) = memory at address in HL
+  T    = T-states (clock cycles)
+
+================================================================================
+ UNPREFIXED OPCODES (1-3 bytes)
+================================================================================
+
+Hex   Bytes  T    Mnemonic             Flags Affected
+----  -----  ---  -------------------  ----------------
+00    1      4    NOP                  --------
+01    3      10   LD BC,nn             --------
+02    1      7    LD (BC),A            --------
+03    1      6    INC BC               --------
+04    1      4    INC B                SZ-H-VN-
+05    1      4    DEC B                SZ-H-VN-
+06    2      7    LD B,n               --------
+07    1      4    RLCA                 ----H-NC
+08    1      4    EX AF,AF'            --------
+09    1      11   ADD HL,BC            ----H-NC
+0A    1      7    LD A,(BC)            --------
+0B    1      6    DEC BC               --------
+0C    1      4    INC C                SZ-H-VN-
+0D    1      4    DEC C                SZ-H-VN-
+0E    2      7    LD C,n               --------
+0F    1      4    RRCA                 ----H-NC
+10    2      13/8 DJNZ e               --------
+11    3      10   LD DE,nn             --------
+12    1      7    LD (DE),A            --------
+13    1      6    INC DE               --------
+14    1      4    INC D                SZ-H-VN-
+15    1      4    DEC D                SZ-H-VN-
+16    2      7    LD D,n               --------
+17    1      4    RLA                  ----H-NC
+18    2      12   JR e                 --------
+19    1      11   ADD HL,DE            ----H-NC
+1A    1      7    LD A,(DE)            --------
+1B    1      6    DEC DE               --------
+1C    1      4    INC E                SZ-H-VN-
+1D    1      4    DEC E                SZ-H-VN-
+1E    2      7    LD E,n               --------
+1F    1      4    RRA                  ----H-NC
+20    2      12/7 JR NZ,e              --------
+21    3      10   LD HL,nn             --------
+22    3      16   LD (nn),HL           --------
+23    1      6    INC HL               --------
+24    1      4    INC H                SZ-H-VN-
+25    1      4    DEC H                SZ-H-VN-
+26    2      7    LD H,n               --------
+27    1      4    DAA                  SZ-H-VNC
+28    2      12/7 JR Z,e               --------
+29    1      11   ADD HL,HL            ----H-NC
+2A    3      16   LD HL,(nn)           --------
+2B    1      6    DEC HL               --------
+2C    1      4    INC L                SZ-H-VN-
+2D    1      4    DEC L                SZ-H-VN-
+2E    2      7    LD L,n               --------
+2F    1      4    CPL                  ----H-N-
+30    2      12/7 JR NC,e              --------
+31    3      10   LD SP,nn             --------
+32    3      13   LD (nn),A            --------
+33    1      6    INC SP               --------
+34    1      11   INC (HL)             SZ-H-VN-
+35    1      11   DEC (HL)             SZ-H-VN-
+36    2      10   LD (HL),n            --------
+37    1      4    SCF                  ----H-NC
+38    2      12/7 JR C,e               --------
+39    1      11   ADD HL,SP            ----H-NC
+3A    3      13   LD A,(nn)            --------
+3B    1      6    DEC SP               --------
+3C    1      4    INC A                SZ-H-VN-
+3D    1      4    DEC A                SZ-H-VN-
+3E    2      7    LD A,n               --------
+3F    1      4    CCF                  ----H-NC
+40    1      4    LD B,B               --------
+41    1      4    LD B,C               --------
+42    1      4    LD B,D               --------
+43    1      4    LD B,E               --------
+44    1      4    LD B,H               --------
+45    1      4    LD B,L               --------
+46    1      7    LD B,(HL)            --------
+47    1      4    LD B,A               --------
+48    1      4    LD C,B               --------
+49    1      4    LD C,C               --------
+4A    1      4    LD C,D               --------
+4B    1      4    LD C,E               --------
+4C    1      4    LD C,H               --------
+4D    1      4    LD C,L               --------
+4E    1      7    LD C,(HL)            --------
+4F    1      4    LD C,A               --------
+50    1      4    LD D,B               --------
+51    1      4    LD D,C               --------
+52    1      4    LD D,D               --------
+53    1      4    LD D,E               --------
+54    1      4    LD D,H               --------
+55    1      4    LD D,L               --------
+56    1      7    LD D,(HL)            --------
+57    1      4    LD D,A               --------
+58    1      4    LD E,B               --------
+59    1      4    LD E,C               --------
+5A    1      4    LD E,D               --------
+5B    1      4    LD E,E               --------
+5C    1      4    LD E,H               --------
+5D    1      4    LD E,L               --------
+5E    1      7    LD E,(HL)            --------
+5F    1      4    LD E,A               --------
+60    1      4    LD H,B               --------
+61    1      4    LD H,C               --------
+62    1      4    LD H,D               --------
+63    1      4    LD H,E               --------
+64    1      4    LD H,H               --------
+65    1      4    LD H,L               --------
+66    1      7    LD H,(HL)            --------
+67    1      4    LD H,A               --------
+68    1      4    LD L,B               --------
+69    1      4    LD L,C               --------
+6A    1      4    LD L,D               --------
+6B    1      4    LD L,E               --------
+6C    1      4    LD L,H               --------
+6D    1      4    LD L,L               --------
+6E    1      7    LD L,(HL)            --------
+6F    1      4    LD L,A               --------
+70    1      7    LD (HL),B            --------
+71    1      7    LD (HL),C            --------
+72    1      7    LD (HL),D            --------
+73    1      7    LD (HL),E            --------
+74    1      7    LD (HL),H            --------
+75    1      7    LD (HL),L            --------
+76    1      4    HALT                 --------
+77    1      7    LD (HL),A            --------
+78    1      4    LD A,B               --------
+79    1      4    LD A,C               --------
+7A    1      4    LD A,D               --------
+7B    1      4    LD A,E               --------
+7C    1      4    LD A,H               --------
+7D    1      4    LD A,L               --------
+7E    1      7    LD A,(HL)            --------
+7F    1      4    LD A,A               --------
+80    1      4    ADD A,B              SZ-H-VNC
+81    1      4    ADD A,C              SZ-H-VNC
+82    1      4    ADD A,D              SZ-H-VNC
+83    1      4    ADD A,E              SZ-H-VNC
+84    1      4    ADD A,H              SZ-H-VNC
+85    1      4    ADD A,L              SZ-H-VNC
+86    1      7    ADD A,(HL)           SZ-H-VNC
+87    1      4    ADD A,A              SZ-H-VNC
+88    1      4    ADC A,B              SZ-H-VNC
+89    1      4    ADC A,C              SZ-H-VNC
+8A    1      4    ADC A,D              SZ-H-VNC
+8B    1      4    ADC A,E              SZ-H-VNC
+8C    1      4    ADC A,H              SZ-H-VNC
+8D    1      4    ADC A,L              SZ-H-VNC
+8E    1      7    ADC A,(HL)           SZ-H-VNC
+8F    1      4    ADC A,A              SZ-H-VNC
+90    1      4    SUB B                SZ-H-VNC
+91    1      4    SUB C                SZ-H-VNC
+92    1      4    SUB D                SZ-H-VNC
+93    1      4    SUB E                SZ-H-VNC
+94    1      4    SUB H                SZ-H-VNC
+95    1      4    SUB L                SZ-H-VNC
+96    1      7    SUB (HL)             SZ-H-VNC
+97    1      4    SUB A                SZ-H-VNC
+98    1      4    SBC A,B              SZ-H-VNC
+99    1      4    SBC A,C              SZ-H-VNC
+9A    1      4    SBC A,D              SZ-H-VNC
+9B    1      4    SBC A,E              SZ-H-VNC
+9C    1      4    SBC A,H              SZ-H-VNC
+9D    1      4    SBC A,L              SZ-H-VNC
+9E    1      7    SBC A,(HL)           SZ-H-VNC
+9F    1      4    SBC A,A              SZ-H-VNC
+A0    1      4    AND B                SZ-H-VN-
+A1    1      4    AND C                SZ-H-VN-
+A2    1      4    AND D                SZ-H-VN-
+A3    1      4    AND E                SZ-H-VN-
+A4    1      4    AND H                SZ-H-VN-
+A5    1      4    AND L                SZ-H-VN-
+A6    1      7    AND (HL)             SZ-H-VN-
+A7    1      4    AND A                SZ-H-VN-
+A8    1      4    XOR B                SZ-H-VN-
+A9    1      4    XOR C                SZ-H-VN-
+AA    1      4    XOR D                SZ-H-VN-
+AB    1      4    XOR E                SZ-H-VN-
+AC    1      4    XOR H                SZ-H-VN-
+AD    1      4    XOR L                SZ-H-VN-
+AE    1      7    XOR (HL)             SZ-H-VN-
+AF    1      4    XOR A                SZ-H-VN-
+B0    1      4    OR B                 SZ-H-VN-
+B1    1      4    OR C                 SZ-H-VN-
+B2    1      4    OR D                 SZ-H-VN-
+B3    1      4    OR E                 SZ-H-VN-
+B4    1      4    OR H                 SZ-H-VN-
+B5    1      4    OR L                 SZ-H-VN-
+B6    1      7    OR (HL)              SZ-H-VN-
+B7    1      4    OR A                 SZ-H-VN-
+B8    1      4    CP B                 SZ-H-VNC
+B9    1      4    CP C                 SZ-H-VNC
+BA    1      4    CP D                 SZ-H-VNC
+BB    1      4    CP E                 SZ-H-VNC
+BC    1      4    CP H                 SZ-H-VNC
+BD    1      4    CP L                 SZ-H-VNC
+BE    1      7    CP (HL)              SZ-H-VNC
+BF    1      4    CP A                 SZ-H-VNC
+C0    1      11/5 RET NZ               --------
+C1    1      10   POP BC               --------
+C2    3      10   JP NZ,nn             --------
+C3    3      10   JP nn                --------
+C4    3      17/10 CALL NZ,nn          --------
+C5    1      11   PUSH BC              --------
+C6    2      7    ADD A,n              SZ-H-VNC
+C7    1      11   RST 00h              --------
+C8    1      11/5 RET Z                --------
+C9    1      10   RET                  --------
+CA    3      10   JP Z,nn              --------
+CB    --     --   [CB PREFIX]          --------
+CC    3      17/10 CALL Z,nn           --------
+CD    3      17   CALL nn              --------
+CE    2      7    ADC A,n              SZ-H-VNC
+CF    1      11   RST 08h              --------
+D0    1      11/5 RET NC               --------
+D1    1      10   POP DE               --------
+D2    3      10   JP NC,nn             --------
+D3    2      11   OUT (n),A            --------
+D4    3      17/10 CALL NC,nn          --------
+D5    1      11   PUSH DE              --------
+D6    2      7    SUB n                SZ-H-VNC
+D7    1      11   RST 10h              --------
+D8    1      11/5 RET C                --------
+D9    1      4    EXX                  --------
+DA    3      10   JP C,nn              --------
+DB    2      11   IN A,(n)             --------
+DC    3      17/10 CALL C,nn           --------
+DD    --     --   [DD PREFIX - IX]     --------
+DE    2      7    SBC A,n              SZ-H-VNC
+DF    1      11   RST 18h              --------
+E0    1      11/5 RET PO               --------
+E1    1      10   POP HL               --------
+E2    3      10   JP PO,nn             --------
+E3    1      19   EX (SP),HL           --------
+E4    3      17/10 CALL PO,nn          --------
+E5    1      11   PUSH HL              --------
+E6    2      7    AND n                SZ-H-VN-
+E7    1      11   RST 20h              --------
+E8    1      11/5 RET PE               --------
+E9    1      4    JP (HL)              --------
+EA    3      10   JP PE,nn             --------
+EB    1      4    EX DE,HL             --------
+EC    3      17/10 CALL PE,nn          --------
+ED    --     --   [ED PREFIX]          --------
+EE    2      7    XOR n                SZ-H-VN-
+EF    1      11   RST 28h              --------
+F0    1      11/5 RET P                --------
+F1    1      10   POP AF               --------
+F2    3      10   JP P,nn              --------
+F3    1      4    DI                   --------
+F4    3      17/10 CALL P,nn           --------
+F5    1      11   PUSH AF              --------
+F6    2      7    OR n                 SZ-H-VN-
+F7    1      11   RST 30h              --------
+F8    1      11/5 RET M                --------
+F9    1      6    LD SP,HL             --------
+FA    3      10   JP M,nn              --------
+FB    1      4    EI                   --------
+FC    3      17/10 CALL M,nn           --------
+FD    --     --   [FD PREFIX - IY]     --------
+FE    2      7    CP n                 SZ-H-VNC
+FF    1      11   RST 38h              --------
+
+================================================================================
+ CB PREFIX — BIT OPERATIONS (2 bytes: CB xx)
+================================================================================
+
+Hex   T    Mnemonic             Flags
+----  ---  -------------------  --------
+CB 00  8   RLC B                SZ-H-VNC
+CB 01  8   RLC C                SZ-H-VNC
+CB 02  8   RLC D                SZ-H-VNC
+CB 03  8   RLC E                SZ-H-VNC
+CB 04  8   RLC H                SZ-H-VNC
+CB 05  8   RLC L                SZ-H-VNC
+CB 06  15  RLC (HL)             SZ-H-VNC
+CB 07  8   RLC A                SZ-H-VNC
+CB 08  8   RRC B                SZ-H-VNC
+CB 09  8   RRC C                SZ-H-VNC
+CB 0A  8   RRC D                SZ-H-VNC
+CB 0B  8   RRC E                SZ-H-VNC
+CB 0C  8   RRC H                SZ-H-VNC
+CB 0D  8   RRC L                SZ-H-VNC
+CB 0E  15  RRC (HL)             SZ-H-VNC
+CB 0F  8   RRC A                SZ-H-VNC
+CB 10  8   RL B                 SZ-H-VNC
+CB 11  8   RL C                 SZ-H-VNC
+CB 12  8   RL D                 SZ-H-VNC
+CB 13  8   RL E                 SZ-H-VNC
+CB 14  8   RL H                 SZ-H-VNC
+CB 15  8   RL L                 SZ-H-VNC
+CB 16  15  RL (HL)              SZ-H-VNC
+CB 17  8   RL A                 SZ-H-VNC
+CB 18  8   RR B                 SZ-H-VNC
+CB 19  8   RR C                 SZ-H-VNC
+CB 1A  8   RR D                 SZ-H-VNC
+CB 1B  8   RR E                 SZ-H-VNC
+CB 1C  8   RR H                 SZ-H-VNC
+CB 1D  8   RR L                 SZ-H-VNC
+CB 1E  15  RR (HL)              SZ-H-VNC
+CB 1F  8   RR A                 SZ-H-VNC
+CB 20  8   SLA B                SZ-H-VNC
+CB 21  8   SLA C                SZ-H-VNC
+CB 22  8   SLA D                SZ-H-VNC
+CB 23  8   SLA E                SZ-H-VNC
+CB 24  8   SLA H                SZ-H-VNC
+CB 25  8   SLA L                SZ-H-VNC
+CB 26  15  SLA (HL)             SZ-H-VNC
+CB 27  8   SLA A                SZ-H-VNC
+CB 28  8   SRA B                SZ-H-VNC
+CB 29  8   SRA C                SZ-H-VNC
+CB 2A  8   SRA D                SZ-H-VNC
+CB 2B  8   SRA E                SZ-H-VNC
+CB 2C  8   SRA H                SZ-H-VNC
+CB 2D  8   SRA L                SZ-H-VNC
+CB 2E  15  SRA (HL)             SZ-H-VNC
+CB 2F  8   SRA A                SZ-H-VNC
+CB 38  8   SRL B                SZ-H-VNC
+CB 39  8   SRL C                SZ-H-VNC
+CB 3A  8   SRL D                SZ-H-VNC
+CB 3B  8   SRL E                SZ-H-VNC
+CB 3C  8   SRL H                SZ-H-VNC
+CB 3D  8   SRL L                SZ-H-VNC
+CB 3E  15  SRL (HL)             SZ-H-VNC
+CB 3F  8   SRL A                SZ-H-VNC
+CB 40  8   BIT 0,B              -Z-H----
+CB 41  8   BIT 0,C              -Z-H----
+CB 42  8   BIT 0,D              -Z-H----
+CB 43  8   BIT 0,E              -Z-H----
+CB 44  8   BIT 0,H              -Z-H----
+CB 45  8   BIT 0,L              -Z-H----
+CB 46  12  BIT 0,(HL)           -Z-H----
+CB 47  8   BIT 0,A              -Z-H----
+CB 48  8   BIT 1,B              -Z-H----
+CB 49  8   BIT 1,C              -Z-H----
+CB 4A  8   BIT 1,D              -Z-H----
+CB 4B  8   BIT 1,E              -Z-H----
+CB 4C  8   BIT 1,H              -Z-H----
+CB 4D  8   BIT 1,L              -Z-H----
+CB 4E  12  BIT 1,(HL)           -Z-H----
+CB 4F  8   BIT 1,A              -Z-H----
+CB 50  8   BIT 2,B              -Z-H----
+CB 51  8   BIT 2,C              -Z-H----
+CB 52  8   BIT 2,D              -Z-H----
+CB 53  8   BIT 2,E              -Z-H----
+CB 54  8   BIT 2,H              -Z-H----
+CB 55  8   BIT 2,L              -Z-H----
+CB 56  12  BIT 2,(HL)           -Z-H----
+CB 57  8   BIT 2,A              -Z-H----
+CB 58  8   BIT 3,B              -Z-H----
+CB 59  8   BIT 3,C              -Z-H----
+CB 5A  8   BIT 3,D              -Z-H----
+CB 5B  8   BIT 3,E              -Z-H----
+CB 5C  8   BIT 3,H              -Z-H----
+CB 5D  8   BIT 3,L              -Z-H----
+CB 5E  12  BIT 3,(HL)           -Z-H----
+CB 5F  8   BIT 3,A              -Z-H----
+CB 60  8   BIT 4,B              -Z-H----
+CB 61  8   BIT 4,C              -Z-H----
+CB 62  8   BIT 4,D              -Z-H----
+CB 63  8   BIT 4,E              -Z-H----
+CB 64  8   BIT 4,H              -Z-H----
+CB 65  8   BIT 4,L              -Z-H----
+CB 66  12  BIT 4,(HL)           -Z-H----
+CB 67  8   BIT 4,A              -Z-H----
+CB 68  8   BIT 5,B              -Z-H----
+CB 69  8   BIT 5,C              -Z-H----
+CB 6A  8   BIT 5,D              -Z-H----
+CB 6B  8   BIT 5,E              -Z-H----
+CB 6C  8   BIT 5,H              -Z-H----
+CB 6D  8   BIT 5,L              -Z-H----
+CB 6E  12  BIT 5,(HL)           -Z-H----
+CB 6F  8   BIT 5,A              -Z-H----
+CB 70  8   BIT 6,B              -Z-H----
+CB 71  8   BIT 6,C              -Z-H----
+CB 72  8   BIT 6,D              -Z-H----
+CB 73  8   BIT 6,E              -Z-H----
+CB 74  8   BIT 6,H              -Z-H----
+CB 75  8   BIT 6,L              -Z-H----
+CB 76  12  BIT 6,(HL)           -Z-H----
+CB 77  8   BIT 6,A              -Z-H----
+CB 78  8   BIT 7,B              -Z-H----
+CB 79  8   BIT 7,C              -Z-H----
+CB 7A  8   BIT 7,D              -Z-H----
+CB 7B  8   BIT 7,E              -Z-H----
+CB 7C  8   BIT 7,H              -Z-H----
+CB 7D  8   BIT 7,L              -Z-H----
+CB 7E  12  BIT 7,(HL)           -Z-H----
+CB 7F  8   BIT 7,A              -Z-H----
+CB 80  8   RES 0,B              --------
+CB 81  8   RES 0,C              --------
+CB 82  8   RES 0,D              --------
+CB 83  8   RES 0,E              --------
+CB 84  8   RES 0,H              --------
+CB 85  8   RES 0,L              --------
+CB 86  15  RES 0,(HL)           --------
+CB 87  8   RES 0,A              --------
+CB 88  8   RES 1,B              --------
+CB 89  8   RES 1,C              --------
+CB 8A  8   RES 1,D              --------
+CB 8B  8   RES 1,E              --------
+CB 8C  8   RES 1,H              --------
+CB 8D  8   RES 1,L              --------
+CB 8E  15  RES 1,(HL)           --------
+CB 8F  8   RES 1,A              --------
+CB 90  8   RES 2,B              --------
+CB 91  8   RES 2,C              --------
+CB 92  8   RES 2,D              --------
+CB 93  8   RES 2,E              --------
+CB 94  8   RES 2,H              --------
+CB 95  8   RES 2,L              --------
+CB 96  15  RES 2,(HL)           --------
+CB 97  8   RES 2,A              --------
+CB 98  8   RES 3,B              --------
+CB 99  8   RES 3,C              --------
+CB 9A  8   RES 3,D              --------
+CB 9B  8   RES 3,E              --------
+CB 9C  8   RES 3,H              --------
+CB 9D  8   RES 3,L              --------
+CB 9E  15  RES 3,(HL)           --------
+CB 9F  8   RES 3,A              --------
+CB A0  8   RES 4,B              --------
+CB A1  8   RES 4,C              --------
+CB A2  8   RES 4,D              --------
+CB A3  8   RES 4,E              --------
+CB A4  8   RES 4,H              --------
+CB A5  8   RES 4,L              --------
+CB A6  15  RES 4,(HL)           --------
+CB A7  8   RES 4,A              --------
+CB A8  8   RES 5,B              --------
+CB A9  8   RES 5,C              --------
+CB AA  8   RES 5,D              --------
+CB AB  8   RES 5,E              --------
+CB AC  8   RES 5,H              --------
+CB AD  8   RES 5,L              --------
+CB AE  15  RES 5,(HL)           --------
+CB AF  8   RES 5,A              --------
+CB B0  8   RES 6,B              --------
+CB B1  8   RES 6,C              --------
+CB B2  8   RES 6,D              --------
+CB B3  8   RES 6,E              --------
+CB B4  8   RES 6,H              --------
+CB B5  8   RES 6,L              --------
+CB B6  15  RES 6,(HL)           --------
+CB B7  8   RES 6,A              --------
+CB B8  8   RES 7,B              --------
+CB B9  8   RES 7,C              --------
+CB BA  8   RES 7,D              --------
+CB BB  8   RES 7,E              --------
+CB BC  8   RES 7,H              --------
+CB BD  8   RES 7,L              --------
+CB BE  15  RES 7,(HL)           --------
+CB BF  8   RES 7,A              --------
+CB C0  8   SET 0,B              --------
+CB C1  8   SET 0,C              --------
+CB C2  8   SET 0,D              --------
+CB C3  8   SET 0,E              --------
+CB C4  8   SET 0,H              --------
+CB C5  8   SET 0,L              --------
+CB C6  15  SET 0,(HL)           --------
+CB C7  8   SET 0,A              --------
+CB C8  8   SET 1,B              --------
+CB C9  8   SET 1,C              --------
+CB CA  8   SET 1,D              --------
+CB CB  8   SET 1,E              --------
+CB CC  8   SET 1,H              --------
+CB CD  8   SET 1,L              --------
+CB CE  15  SET 1,(HL)           --------
+CB CF  8   SET 1,A              --------
+CB D0  8   SET 2,B              --------
+CB D1  8   SET 2,C              --------
+CB D2  8   SET 2,D              --------
+CB D3  8   SET 2,E              --------
+CB D4  8   SET 2,H              --------
+CB D5  8   SET 2,L              --------
+CB D6  15  SET 2,(HL)           --------
+CB D7  8   SET 2,A              --------
+CB D8  8   SET 3,B              --------
+CB D9  8   SET 3,C              --------
+CB DA  8   SET 3,D              --------
+CB DB  8   SET 3,E              --------
+CB DC  8   SET 3,H              --------
+CB DD  8   SET 3,L              --------
+CB DE  15  SET 3,(HL)           --------
+CB DF  8   SET 3,A              --------
+CB E0  8   SET 4,B              --------
+CB E1  8   SET 4,C              --------
+CB E2  8   SET 4,D              --------
+CB E3  8   SET 4,E              --------
+CB E4  8   SET 4,H              --------
+CB E5  8   SET 4,L              --------
+CB E6  15  SET 4,(HL)           --------
+CB E7  8   SET 4,A              --------
+CB E8  8   SET 5,B              --------
+CB E9  8   SET 5,C              --------
+CB EA  8   SET 5,D              --------
+CB EB  8   SET 5,E              --------
+CB EC  8   SET 5,H              --------
+CB ED  8   SET 5,L              --------
+CB EE  15  SET 5,(HL)           --------
+CB EF  8   SET 5,A              --------
+CB F0  8   SET 6,B              --------
+CB F1  8   SET 6,C              --------
+CB F2  8   SET 6,D              --------
+CB F3  8   SET 6,E              --------
+CB F4  8   SET 6,H              --------
+CB F5  8   SET 6,L              --------
+CB F6  15  SET 6,(HL)           --------
+CB F7  8   SET 6,A              --------
+CB F8  8   SET 7,B              --------
+CB F9  8   SET 7,C              --------
+CB FA  8   SET 7,D              --------
+CB FB  8   SET 7,E              --------
+CB FC  8   SET 7,H              --------
+CB FD  8   SET 7,L              --------
+CB FE  15  SET 7,(HL)           --------
+CB FF  8   SET 7,A              --------
+
+================================================================================
+ ED PREFIX — EXTENDED OPERATIONS (2 bytes: ED xx)
+================================================================================
+
+Hex     T      Mnemonic             Flags
+------  -----  -------------------  --------
+ED 40   12     IN B,(C)             SZ-H-VN-
+ED 41   12     OUT (C),B            --------
+ED 42   15     SBC HL,BC            SZ-H-VNC
+ED 43   20     LD (nn),BC           --------
+ED 44   8      NEG                  SZ-H-VNC
+ED 45   14     RETN                 --------
+ED 46   8      IM 0                 --------
+ED 47   9      LD I,A               --------
+ED 48   12     IN C,(C)             SZ-H-VN-
+ED 49   12     OUT (C),C            --------
+ED 4A   15     ADC HL,BC            SZ-H-VNC
+ED 4B   20     LD BC,(nn)           --------
+ED 4D   14     RETI                 --------
+ED 4F   9      LD R,A               --------
+ED 50   12     IN D,(C)             SZ-H-VN-
+ED 51   12     OUT (C),D            --------
+ED 52   15     SBC HL,DE            SZ-H-VNC
+ED 53   20     LD (nn),DE           --------
+ED 56   8      IM 1                 --------
+ED 57   9      LD A,I               SZ-H-V--
+ED 58   12     IN E,(C)             SZ-H-VN-
+ED 59   12     OUT (C),E            --------
+ED 5A   15     ADC HL,DE            SZ-H-VNC
+ED 5B   20     LD DE,(nn)           --------
+ED 5E   8      IM 2                 --------
+ED 5F   9      LD A,R               SZ-H-V--
+ED 60   12     IN H,(C)             SZ-H-VN-
+ED 61   12     OUT (C),H            --------
+ED 62   15     SBC HL,HL            SZ-H-VNC
+ED 63   20     LD (nn),HL           --------
+ED 67   18     RRD                  SZ-H-VN-
+ED 68   12     IN L,(C)             SZ-H-VN-
+ED 69   12     OUT (C),L            --------
+ED 6A   15     ADC HL,HL            SZ-H-VNC
+ED 6B   20     LD HL,(nn)           --------
+ED 6F   18     RLD                  SZ-H-VN-
+ED 72   15     SBC HL,SP            SZ-H-VNC
+ED 73   20     LD (nn),SP           --------
+ED 78   12     IN A,(C)             SZ-H-VN-
+ED 79   12     OUT (C),A            --------
+ED 7A   15     ADC HL,SP            SZ-H-VNC
+ED 7B   20     LD SP,(nn)           --------
+ED A0   16     LDI                  ---H-VN-
+ED A1   16     CPI                  SZ-H-VN-
+ED A2   16     INI                  -Z---*N-
+ED A3   16     OUTI                 -Z---*N-
+ED A8   16     LDD                  ---H-VN-
+ED A9   16     CPD                  SZ-H-VN-
+ED AA   16     IND                  -Z---*N-
+ED AB   16     OUTD                 -Z---*N-
+ED B0   21/16  LDIR                 ---H-VN-
+ED B1   21/16  CPIR                 SZ-H-VN-
+ED B2   21/16  INIR                 -Z---*N-
+ED B3   21/16  OTIR                 -Z---*N-
+ED B8   21/16  LDDR                 ---H-VN-
+ED B9   21/16  CPDR                 SZ-H-VN-
+ED BA   21/16  INDR                 -Z---*N-
+ED BB   21/16  OTDR                 -Z---*N-
+
+================================================================================
+ DD PREFIX — IX REGISTER OPERATIONS (2-4 bytes: DD xx [d] [n/nn])
+================================================================================
+
+Hex        T    Mnemonic             Flags
+---------  ---  -------------------  --------
+DD 09      15   ADD IX,BC            ----H-NC
+DD 19      15   ADD IX,DE            ----H-NC
+DD 21 nn   14   LD IX,nn             --------
+DD 22 nn   20   LD (nn),IX           --------
+DD 23      10   INC IX               --------
+DD 29      15   ADD IX,IX            ----H-NC
+DD 2A nn   20   LD IX,(nn)           --------
+DD 2B      10   DEC IX               --------
+DD 34 d    23   INC (IX+d)           SZ-H-VN-
+DD 35 d    23   DEC (IX+d)           SZ-H-VN-
+DD 36 d n  19   LD (IX+d),n          --------
+DD 39      15   ADD IX,SP            ----H-NC
+DD 46 d    19   LD B,(IX+d)          --------
+DD 4E d    19   LD C,(IX+d)          --------
+DD 56 d    19   LD D,(IX+d)          --------
+DD 5E d    19   LD E,(IX+d)          --------
+DD 66 d    19   LD H,(IX+d)          --------
+DD 6E d    19   LD L,(IX+d)          --------
+DD 70 d    19   LD (IX+d),B          --------
+DD 71 d    19   LD (IX+d),C          --------
+DD 72 d    19   LD (IX+d),D          --------
+DD 73 d    19   LD (IX+d),E          --------
+DD 74 d    19   LD (IX+d),H          --------
+DD 75 d    19   LD (IX+d),L          --------
+DD 77 d    19   LD (IX+d),A          --------
+DD 7E d    19   LD A,(IX+d)          --------
+DD 86 d    19   ADD A,(IX+d)         SZ-H-VNC
+DD 8E d    19   ADC A,(IX+d)         SZ-H-VNC
+DD 96 d    19   SUB (IX+d)           SZ-H-VNC
+DD 9E d    19   SBC A,(IX+d)         SZ-H-VNC
+DD A6 d    19   AND (IX+d)           SZ-H-VN-
+DD AE d    19   XOR (IX+d)           SZ-H-VN-
+DD B6 d    19   OR (IX+d)            SZ-H-VN-
+DD BE d    19   CP (IX+d)            SZ-H-VNC
+DD E1      14   POP IX               --------
+DD E3      23   EX (SP),IX           --------
+DD E5      15   PUSH IX              --------
+DD E9      8    JP (IX)              --------
+DD F9      10   LD SP,IX             --------
+
+================================================================================
+ FD PREFIX — IY REGISTER OPERATIONS (2-4 bytes: FD xx [d] [n/nn])
+================================================================================
+
+Hex        T    Mnemonic             Flags
+---------  ---  -------------------  --------
+FD 09      15   ADD IY,BC            ----H-NC
+FD 19      15   ADD IY,DE            ----H-NC
+FD 21 nn   14   LD IY,nn             --------
+FD 22 nn   20   LD (nn),IY           --------
+FD 23      10   INC IY               --------
+FD 29      15   ADD IY,IY            ----H-NC
+FD 2A nn   20   LD IY,(nn)           --------
+FD 2B      10   DEC IY               --------
+FD 34 d    23   INC (IY+d)           SZ-H-VN-
+FD 35 d    23   DEC (IY+d)           SZ-H-VN-
+FD 36 d n  19   LD (IY+d),n          --------
+FD 39      15   ADD IY,SP            ----H-NC
+FD 46 d    19   LD B,(IY+d)          --------
+FD 4E d    19   LD C,(IY+d)          --------
+FD 56 d    19   LD D,(IY+d)          --------
+FD 5E d    19   LD E,(IY+d)          --------
+FD 66 d    19   LD H,(IY+d)          --------
+FD 6E d    19   LD L,(IY+d)          --------
+FD 70 d    19   LD (IY+d),B          --------
+FD 71 d    19   LD (IY+d),C          --------
+FD 72 d    19   LD (IY+d),D          --------
+FD 73 d    19   LD (IY+d),E          --------
+FD 74 d    19   LD (IY+d),H          --------
+FD 75 d    19   LD (IY+d),L          --------
+FD 77 d    19   LD (IY+d),A          --------
+FD 7E d    19   LD A,(IY+d)          --------
+FD 86 d    19   ADD A,(IY+d)         SZ-H-VNC
+FD 8E d    19   ADC A,(IY+d)         SZ-H-VNC
+FD 96 d    19   SUB (IY+d)           SZ-H-VNC
+FD 9E d    19   SBC A,(IY+d)         SZ-H-VNC
+FD A6 d    19   AND (IY+d)           SZ-H-VN-
+FD AE d    19   XOR (IY+d)           SZ-H-VN-
+FD B6 d    19   OR (IY+d)            SZ-H-VN-
+FD BE d    19   CP (IY+d)            SZ-H-VNC
+FD E1      14   POP IY               --------
+FD E3      23   EX (SP),IY           --------
+FD E5      15   PUSH IY              --------
+FD E9      8    JP (IY)              --------
+FD F9      10   LD SP,IY             --------
+
+================================================================================
+ DD CB PREFIX — IX BIT OPERATIONS (4 bytes: DD CB d xx)
+================================================================================
+
+Hex           T    Mnemonic              Flags
+------------  ---  --------------------  --------
+DD CB d 06    23   RLC (IX+d)            SZ-H-VNC
+DD CB d 0E    23   RRC (IX+d)            SZ-H-VNC
+DD CB d 16    23   RL (IX+d)             SZ-H-VNC
+DD CB d 1E    23   RR (IX+d)             SZ-H-VNC
+DD CB d 26    23   SLA (IX+d)            SZ-H-VNC
+DD CB d 2E    23   SRA (IX+d)            SZ-H-VNC
+DD CB d 3E    23   SRL (IX+d)            SZ-H-VNC
+DD CB d 46    20   BIT 0,(IX+d)          -Z-H----
+DD CB d 4E    20   BIT 1,(IX+d)          -Z-H----
+DD CB d 56    20   BIT 2,(IX+d)          -Z-H----
+DD CB d 5E    20   BIT 3,(IX+d)          -Z-H----
+DD CB d 66    20   BIT 4,(IX+d)          -Z-H----
+DD CB d 6E    20   BIT 5,(IX+d)          -Z-H----
+DD CB d 76    20   BIT 6,(IX+d)          -Z-H----
+DD CB d 7E    20   BIT 7,(IX+d)          -Z-H----
+DD CB d 86    23   RES 0,(IX+d)          --------
+DD CB d 8E    23   RES 1,(IX+d)          --------
+DD CB d 96    23   RES 2,(IX+d)          --------
+DD CB d 9E    23   RES 3,(IX+d)          --------
+DD CB d A6    23   RES 4,(IX+d)          --------
+DD CB d AE    23   RES 5,(IX+d)          --------
+DD CB d B6    23   RES 6,(IX+d)          --------
+DD CB d BE    23   RES 7,(IX+d)          --------
+DD CB d C6    23   SET 0,(IX+d)          --------
+DD CB d CE    23   SET 1,(IX+d)          --------
+DD CB d D6    23   SET 2,(IX+d)          --------
+DD CB d DE    23   SET 3,(IX+d)          --------
+DD CB d E6    23   SET 4,(IX+d)          --------
+DD CB d EE    23   SET 5,(IX+d)          --------
+DD CB d F6    23   SET 6,(IX+d)          --------
+DD CB d FE    23   SET 7,(IX+d)          --------
+
+================================================================================
+ FD CB PREFIX — IY BIT OPERATIONS (4 bytes: FD CB d xx)
+================================================================================
+
+Hex           T    Mnemonic              Flags
+------------  ---  --------------------  --------
+FD CB d 06    23   RLC (IY+d)            SZ-H-VNC
+FD CB d 0E    23   RRC (IY+d)            SZ-H-VNC
+FD CB d 16    23   RL (IY+d)             SZ-H-VNC
+FD CB d 1E    23   RR (IY+d)             SZ-H-VNC
+FD CB d 26    23   SLA (IY+d)            SZ-H-VNC
+FD CB d 2E    23   SRA (IY+d)            SZ-H-VNC
+FD CB d 3E    23   SRL (IY+d)            SZ-H-VNC
+FD CB d 46    20   BIT 0,(IY+d)          -Z-H----
+FD CB d 4E    20   BIT 1,(IY+d)          -Z-H----
+FD CB d 56    20   BIT 2,(IY+d)          -Z-H----
+FD CB d 5E    20   BIT 3,(IY+d)          -Z-H----
+FD CB d 66    20   BIT 4,(IY+d)          -Z-H----
+FD CB d 6E    20   BIT 5,(IY+d)          -Z-H----
+FD CB d 76    20   BIT 6,(IY+d)          -Z-H----
+FD CB d 7E    20   BIT 7,(IY+d)          -Z-H----
+FD CB d 86    23   RES 0,(IY+d)          --------
+FD CB d 8E    23   RES 1,(IY+d)          --------
+FD CB d 96    23   RES 2,(IY+d)          --------
+FD CB d 9E    23   RES 3,(IY+d)          --------
+FD CB d A6    23   RES 4,(IY+d)          --------
+FD CB d AE    23   RES 5,(IY+d)          --------
+FD CB d B6    23   RES 6,(IY+d)          --------
+FD CB d BE    23   RES 7,(IY+d)          --------
+FD CB d C6    23   SET 0,(IY+d)          --------
+FD CB d CE    23   SET 1,(IY+d)          --------
+FD CB d D6    23   SET 2,(IY+d)          --------
+FD CB d DE    23   SET 3,(IY+d)          --------
+FD CB d E6    23   SET 4,(IY+d)          --------
+FD CB d EE    23   SET 5,(IY+d)          --------
+FD CB d F6    23   SET 6,(IY+d)          --------
+FD CB d FE    23   SET 7,(IY+d)          --------
+
+================================================================================
+ OPCODE COUNT SUMMARY
+================================================================================
+
+ Unprefixed:     245 opcodes (excluding CB/DD/ED/FD prefix bytes)
+ CB prefix:      248 opcodes (excluding undocumented SLL CB 30-37)
+ ED prefix:       46 opcodes
+ DD prefix:       35 opcodes
+ FD prefix:       35 opcodes
+ DD CB prefix:    32 opcodes
+ FD CB prefix:    32 opcodes
+ ─────────────────────────────
+ TOTAL:          673 documented opcodes
+
+================================================================================
+ FLAGS REFERENCE
+================================================================================
+
+ S = Sign (bit 7 of result)
+ Z = Zero (result is zero)
+ H = Half-carry (carry from bit 3)
+ V = Overflow/Parity (P/V flag)
+ N = Subtract (set if last op was subtraction)
+ C = Carry (carry from bit 7)
+
+ Flag notation:
+   S  = affected
+   -  = not affected
+   *  = special behavior (see Zilog manual)
+   0  = reset
+   1  = set
