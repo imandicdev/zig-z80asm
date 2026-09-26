@@ -26,21 +26,21 @@ The last form also assembles the Spectrum ROM at comptime, which is slow.
 
 ## Performance
 
-The full Spectrum ROM (17,699 lines after preparation), before and after the
-optimizations. Zig 0.16.0, Windows x86_64.
+The full Spectrum ROM (17,699 lines after preparation), before the
+optimizations and in 0.1.0. Zig 0.16.0, Windows x86_64.
 
-| | Before | After |
+| | Before | 0.1.0 |
 |---|---|---|
-| Comptime: compile time | 28 min | 48 s |
-| Comptime: peak memory | about 5 GB | 1,076 MB |
-| Runtime, ReleaseFast | 13.1 ms | 3.1 ms |
-| Runtime, Debug | 107.6 ms | 39.5 ms |
+| Comptime: compile time | 28 min | 50 s |
+| Comptime: peak memory | about 5 GB | 1,067 MB |
+| Runtime, ReleaseFast | 13.1 ms | 3.4 ms |
+| Runtime, Debug | 107.6 ms | 40.7 ms |
 
 Comptime is the test's compile step with `-Dprograms-comptime=true`, in a
 Debug build as the tests use, so it includes the 0xAA overwrite of line
-copies. Peak memory "after" is the largest working set of any zig process
-during that build; "before" is Zig's own rounded MaxRSS ("5G"). Runtime is
-the median of 25 runs of `zig build bench`.
+copies. Peak memory for 0.1.0 is the largest working set of any zig
+process during that build, from an empty cache; "before" is Zig's own
+rounded MaxRSS ("5G"). Runtime is the median of 25 runs of `zig build bench`.
 
 The goal of 1 GB is missed by about 7%. What is left is spread over parsing,
 expressions and encoding at comptime, where every intermediate value stays
@@ -65,6 +65,12 @@ takes for a 10-line slice.
 | Source read in 4 KB blocks | 5.4 ms / 44.1 ms | 8 s, 343 MB | |
 | Overlap bitmap as a byte slice | 3.1 ms / 39.1 ms | 8 s, 312 MB | 49 s, 1,068 MB |
 | Line copies overwritten after use (Debug) | 3.1 ms / 39.5 ms | | 48 s, 1,076 MB |
+| DB and DW without a limit on values (not an optimization) | 3.4 ms / 40.7 ms | | 50 s, 1,067 MB |
+
+The last change costs 0.3 ms at runtime without running any new code on
+the ROM: the DB and DW lines there all fit in one token buffer. Moving the
+new dispatch back out of `statement()` made it 3.5 ms, so the difference
+comes from how the compiler lays out the changed functions.
 
 ## SDCC
 
