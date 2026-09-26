@@ -6,9 +6,11 @@ longer data lines are split before it sees them. That gives the same bytes
 as long as those lines do not use $.
 
 Usage, from the repository root:
-    python compare/gen_refs.py
+    python compare/gen_refs.py --sjasmplus PATH
+or with the path in the SJASMPLUS environment variable.
 """
 
+import argparse
 import glob
 import os
 import re
@@ -17,9 +19,10 @@ import subprocess
 import sys
 import tempfile
 
+import reference
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CASES = os.path.join(HERE, "..", "test", "cases")
-SJASM = os.path.join(HERE, "..", "tools", "sjasmplus", "sjasmplus-1.24.0.win", "sjasmplus.exe")
 
 DATA = re.compile(r"^(\s+)(DB|DEFB|DW|DEFW)\s+(.*)$", re.IGNORECASE)
 CHUNK = 64
@@ -62,19 +65,28 @@ def split_data(source):
     return "\n".join(lines)
 
 
-# sjasmplus rejects backslashes in paths, so run it next to the files.
-with tempfile.TemporaryDirectory() as tmp:
-    for asm in sorted(os.path.basename(p) for p in glob.glob(os.path.join(CASES, "*.asm"))):
-        out = asm[:-4] + ".bin"
-        with open(os.path.join(CASES, asm), newline="") as f:
-            source = f.read()
-        with open(os.path.join(tmp, asm), "w", newline="") as f:
-            f.write(split_data(source))
-        r = subprocess.run([SJASM, "--nologo", "--raw=" + out, asm], capture_output=True, text=True, cwd=tmp)
-        noise = [l for l in r.stdout.splitlines() + r.stderr.splitlines()
-                 if l and not l.startswith("Pass") and not l.startswith("Errors: 0")]
-        if r.returncode != 0 or noise:
-            print("\n".join(noise))
-            sys.exit("sjasmplus did not accept %s cleanly" % asm)
-        shutil.copy(os.path.join(tmp, out), os.path.join(CASES, out))
-        print("%-18s %5d bytes" % (out, os.path.getsize(os.path.join(CASES, out))))
+def main():
+    parser = argparse.ArgumentParser(description="Regenerates test/cases/*.bin with sjasmplus.")
+    reference.add_option(parser, reference.SJASMPLUS)
+    sjasm = reference.path(parser, parser.parse_args(), reference.SJASMPLUS)
+
+    # sjasmplus rejects backslashes in paths, so run it next to the files.
+    with tempfile.TemporaryDirectory() as tmp:
+        for asm in sorted(os.path.basename(p) for p in glob.glob(os.path.join(CASES, "*.asm"))):
+            out = asm[:-4] + ".bin"
+            with open(os.path.join(CASES, asm), newline="") as f:
+                source = f.read()
+            with open(os.path.join(tmp, asm), "w", newline="") as f:
+                f.write(split_data(source))
+            r = subprocess.run([sjasm, "--nologo", "--raw=" + out, asm], capture_output=True, text=True, cwd=tmp)
+            noise = [l for l in r.stdout.splitlines() + r.stderr.splitlines()
+                     if l and not l.startswith("Pass") and not l.startswith("Errors: 0")]
+            if r.returncode != 0 or noise:
+                print("\n".join(noise))
+                sys.exit("sjasmplus did not accept %s cleanly" % asm)
+            shutil.copy(os.path.join(tmp, out), os.path.join(CASES, out))
+            print("%-18s %5d bytes" % (out, os.path.getsize(os.path.join(CASES, out))))
+
+
+if __name__ == "__main__":
+    main()

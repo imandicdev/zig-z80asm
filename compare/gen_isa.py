@@ -6,17 +6,20 @@ by sjasmplus, and is mapped to the matching isa.zig call. The generated Zig test
 against the list's Hex column, so a mistake in the list shows up too.
 
 Usage, from the repository root:
-    python compare/gen_isa.py && zig build compare
+    python compare/gen_isa.py --sjasmplus PATH && zig build compare
+or with the path in the SJASMPLUS environment variable.
 """
 
+import argparse
 import os
 import re
 import subprocess
 import sys
 
+import reference
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
-SJASM = os.path.join(HERE, "..", "tools", "sjasmplus", "sjasmplus-1.24.0.win", "sjasmplus.exe")
 
 N = 0x5A
 NN = 0x1234
@@ -197,8 +200,8 @@ def concretize(mnem, d):
     return re.sub(r"\be\b", "$+%d" % (E + 2), s)
 
 
-def run_sjasmplus(asm_path, bin_path, lst_path):
-    r = subprocess.run([SJASM, "--nologo", "--raw=" + bin_path, "--lst=" + lst_path, asm_path],
+def run_sjasmplus(sjasm, asm_path, bin_path, lst_path):
+    r = subprocess.run([sjasm, "--nologo", "--raw=" + bin_path, "--lst=" + lst_path, asm_path],
                        capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout, r.stderr)
@@ -247,6 +250,10 @@ def write_zig_test(path, cases):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Generates the encoder check against sjasmplus.")
+    reference.add_option(parser, reference.SJASMPLUS)
+    sjasm = reference.path(parser, parser.parse_args(), reference.SJASMPLUS)
+
     os.makedirs(OUT, exist_ok=True)
     cases = []
     for hex_tokens, mnem in parse_list(os.path.join(HERE, "z80_documented_opcodes.txt")):
@@ -264,7 +271,7 @@ def main():
         f.write("    ORG 0x0000\n")
         for c in cases:
             f.write("    %s\n" % c["asm"])
-    ref, listing = run_sjasmplus(asm_path, os.path.join(OUT, "isa_cases.bin"), os.path.join(OUT, "isa_cases.lst"))
+    ref, listing = run_sjasmplus(sjasm, asm_path, os.path.join(OUT, "isa_cases.bin"), os.path.join(OUT, "isa_cases.lst"))
 
     # Source line 1 is ORG, so case i is on line i + 2.
     list_mismatches = []
