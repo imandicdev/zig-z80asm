@@ -117,6 +117,8 @@ pc: u32 = 0,
 /// Address of the current statement, the value of `$`.
 statement_pc: u32 = 0,
 line_number: u32 = 0,
+/// Set by END. The rest of a source is not read, and code that a Zig body
+/// emits afterwards is an error.
 ended: bool = false,
 /// Uses of symbols without a value in this pass.
 unresolved: u32 = 0,
@@ -349,6 +351,7 @@ fn checkArea(a: *Assembler) Error!void {
 }
 
 fn store(a: *Assembler, b: u8) Error!void {
+    if (a.ended) return a.fail("code after END", .{});
     try a.checkArea();
     if (a.pc > 0xFFFF) return a.fail("address beyond 0xFFFF", .{});
     const addr = a.pc;

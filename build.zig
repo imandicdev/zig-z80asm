@@ -63,6 +63,24 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&obj.step);
     }
 
+    // The same for a Zig body that emits code after END.
+    const after_end = b.createModule(.{
+        .root_source_file = wf.add("reject_code_after_end.zig",
+            \\const z80 = @import("z80asm");
+            \\comptime {
+            \\    _ = z80.comptimeBuild(.{}, {}, @import("assembler_test").codeAfterEnd);
+            \\}
+            \\
+        ),
+        .target = target,
+        .optimize = optimize,
+    });
+    after_end.addImport("z80asm", mod);
+    after_end.addImport("assembler_test", assembler_tests);
+    const after_end_obj = b.addObject(.{ .name = "reject_code_after_end", .root_module = after_end });
+    after_end_obj.expect_errors = .{ .contains = "code after END" };
+    test_step.dependOn(&after_end_obj.step);
+
     const reject_runtime = b.createModule(.{
         .root_source_file = b.path("test/reject_test.zig"),
         .target = target,

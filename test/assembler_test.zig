@@ -79,6 +79,25 @@ test "the comptime symbol capacity can be raised" {
     try std.testing.expectEqualSlices(u8, &.{ 0x33, 0x08 }, image);
 }
 
+/// build.zig also runs this body with comptimeBuild and expects the same
+/// message as a compile error.
+pub fn codeAfterEnd(_: void, a: *Assembler) Assembler.Error!void {
+    try a.emit(isa.nop());
+    try a.line("  END");
+    a.emit(isa.halt()) catch {};
+    try a.bytes("x");
+}
+
+test "every emit after END in a Zig body is an error" {
+    const r = z80.run(.{}, workspace.buffers(), {}, codeAfterEnd);
+    try std.testing.expectEqual(2, r.diagnostics.len);
+    for (r.diagnostics) |d| {
+        var buf: [200]u8 = undefined;
+        try std.testing.expectEqualStrings("code after END", try std.fmt.bufPrint(&buf, "{f}", .{d}));
+    }
+    try std.testing.expectEqualSlices(u8, &.{0x00}, r.bytes);
+}
+
 // Features that sjasmplus also accepts are checked against it in
 // test/cases_test.zig. SDCC syntax is not, so it is checked here.
 
