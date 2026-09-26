@@ -117,6 +117,35 @@ def zig_call(m):
     return None
 
 
+def undocumented_cases():
+    """(asm, isa call) for the undocumented forms isa.zig supports. They are not
+    in the opcode list, so they are checked against sjasmplus only."""
+    regs = ["B", "C", "D", "E", "H", "L", "(HL)", "A"]
+    plain = ["A", "B", "C", "D", "E"]
+    out = [("SLL %s" % r, "rot(.sll, %s)" % R8[r]) for r in regs]
+    for idx in ("IX", "IY"):
+        i = "." + idx.lower()
+        for d in DISPS:
+            asm_d = ("+%d" % d) if d >= 0 else str(d)
+            out.append(("SLL (%s%s)" % (idx, asm_d), "rotIdxD(.sll, %s, %d)" % (i, d)))
+        halves = {idx + "H": ".h", idx + "L": ".l"}
+        for half, hl in halves.items():
+            ix = "indexHalf(%s, isa.%%s)" % i
+            out.append(("LD %s,0x%02X" % (half, N), ix % ("ldRN(%s, 0x%02X)" % (hl, N))))
+            out.append(("INC %s" % half, ix % ("incR(%s)" % hl)))
+            out.append(("DEC %s" % half, ix % ("decR(%s)" % hl)))
+            for r in plain:
+                out.append(("LD %s,%s" % (r, half), ix % ("ldRR(%s, %s)" % (R8[r], hl))))
+                out.append(("LD %s,%s" % (half, r), ix % ("ldRR(%s, %s)" % (hl, R8[r]))))
+            for src, shl in halves.items():
+                out.append(("LD %s,%s" % (half, src), ix % ("ldRR(%s, %s)" % (hl, shl))))
+            for prefix, op in ALU.items():
+                out.append(("%s%s" % (prefix, half), ix % ("aluR(%s, %s)" % (op, hl))))
+    out.append(("IN F,(C)", "inFC()"))
+    out.append(("OUT (C),0", "outC0()"))
+    return out
+
+
 def parse_list(path):
     """(hex tokens, mnemonic) for every opcode row in the list."""
     rows = []
@@ -226,6 +255,9 @@ def main():
         for d in (DISPS if "+d)" in mnem else [0]):
             expr = tmpl and tmpl.format(n="0x%02X" % N, nn="0x%04X" % NN, d=d, e=E)
             cases.append({"form": mnem, "asm": concretize(mnem, d), "list": expected_bytes(hex_tokens, d), "expr": expr})
+    documented = len(cases)
+    for asm, expr in undocumented_cases():
+        cases.append({"form": None, "asm": asm, "list": None, "expr": expr})
 
     asm_path = os.path.join(OUT, "isa_cases.asm")
     with open(asm_path, "w", newline="\n") as f:
@@ -241,13 +273,13 @@ def main():
         if list(ref[addr:addr + len(got)]) != got:
             sys.exit("listing and raw output disagree at line %d" % (i + 2))
         c["off"], c["len"] = addr, len(got)
-        if got != c["list"]:
+        if c["list"] is not None and got != c["list"]:
             list_mismatches.append((c["asm"], c["list"], got))
 
     write_zig_test(os.path.join(HERE, "isa_cases.zig"), cases)
 
     forms = {}
-    for c in cases:
+    for c in cases[:documented]:
         forms.setdefault(c["form"], c["expr"] is not None)
     missing = sorted(f for f, ok in forms.items() if not ok)
     with open(os.path.join(HERE, "isa_coverage.txt"), "w", newline="\n") as f:
@@ -256,12 +288,14 @@ def main():
         f.write("Without an encoder: %d\n" % len(missing))
         for m in missing:
             f.write("  %s\n" % m)
+        f.write("Undocumented cases (checked against sjasmplus only): %d\n" % (len(cases) - documented))
 
     print("opcodes in list: %d, test cases: %d, sjasmplus bytes: %d" % (len(forms), len(cases), len(ref)))
     print("list vs sjasmplus mismatches: %d" % len(list_mismatches))
     for asm, exp, got in list_mismatches:
         print("  %-22s list %s  sjasmplus %s" % (asm, " ".join("%02X" % b for b in exp), " ".join("%02X" % b for b in got)))
     print("encoder coverage: %d of %d forms" % (len(forms) - len(missing), len(forms)))
+    print("undocumented cases: %d" % (len(cases) - documented))
 
 
 if __name__ == "__main__":

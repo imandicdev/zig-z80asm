@@ -1,3 +1,4 @@
 Documented opcodes: 696 (from z80_documented_opcodes.txt)
 With an isa.zig encoder: 696
 Without an encoder: 0
+Undocumented cases (checked against sjasmplus only): 106

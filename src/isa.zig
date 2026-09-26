@@ -20,7 +20,8 @@ pub const R16af = enum(u2) { bc, de, hl, af };
 pub const Idx = enum { ix, iy };
 pub const Cc = enum(u3) { nz, z, nc, c, po, pe, p, m };
 pub const Alu = enum(u3) { add, adc, sub, sbc, @"and", xor, @"or", cp };
-pub const Rot = enum(u3) { rlc = 0, rrc = 1, rl = 2, rr = 3, sla = 4, sra = 5, srl = 7 };
+/// `sll` (CB 30-37) is undocumented: shifts left and sets bit 0.
+pub const Rot = enum(u3) { rlc, rrc, rl, rr, sla, sra, sll, srl };
 
 fn enc1(b0: u8) Encoding {
     return .{ .bytes = .{ b0, 0, 0, 0 }, .len = 1 };
@@ -258,6 +259,15 @@ pub fn ldIdxDN(idx: Idx, d: i8, n: u8) Encoding {
     return enc4(prefix(idx), 0x36, disp(d), n);
 }
 
+/// Prefixes an instruction that uses H and/or L with DD/FD, which makes it
+/// operate on IXH/IXL or IYH/IYL instead (undocumented). The instruction must
+/// not use (HL).
+pub fn indexHalf(idx: Idx, e: Encoding) Encoding {
+    var out: Encoding = .{ .bytes = .{ prefix(idx), 0, 0, 0 }, .len = e.len + 1 };
+    @memcpy(out.bytes[1..out.len], e.slice());
+    return out;
+}
+
 pub fn push(rr: R16af) Encoding {
     return enc1(0xC5 | pair(rr));
 }
@@ -374,6 +384,14 @@ pub fn inRC(dst: R8) Encoding {
 }
 pub fn outCR(src: R8) Encoding {
     return enc2(0xED, 0x41 | reg(src) << 3);
+}
+/// IN F,(C), also written IN (C): reads the port and sets flags only (undocumented).
+pub fn inFC() Encoding {
+    return enc2(0xED, 0x70);
+}
+/// OUT (C),0 (undocumented).
+pub fn outC0() Encoding {
+    return enc2(0xED, 0x71);
 }
 
 pub fn rot(op: Rot, r: R8) Encoding {
