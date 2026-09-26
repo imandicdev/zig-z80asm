@@ -38,6 +38,7 @@ Zig 0.16.0, Windows x86_64.
 | Baseline | 13.1 ms / 107.6 ms | 48 s, 720 MB | 28 min, 5 GB |
 | Symbol hash table | 5.3 ms / 46.7 ms | 45 s, 717 MB | |
 | Keyword, register and condition tables | 5.2 ms / 44.7 ms | 12 s, 320 MB | |
+| Line ends found 32 bytes at a time | 5.3 ms / 43.9 ms | 11 s, 319 MB | |
 
 ## SDCC
 

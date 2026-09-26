@@ -170,15 +170,30 @@ pub fn assemble(source: []const u8, options: Options, buffers: Buffers) Result {
 }
 
 fn assembleLines(source: []const u8, a: *Assembler) Error!void {
-    var lines = std.mem.splitScalar(u8, source, '\n');
+    var start: usize = 0;
     var number: u32 = 0;
-    while (lines.next()) |text| {
-        if (a.ended) break;
+    while (start <= source.len and !a.ended) {
+        const end = lineEnd(source, start);
         number += 1;
         a.line_number = number;
-        a.line(text) catch {};
+        a.line(source[start..end]) catch {};
+        start = end + 1;
     }
     a.line_number = 0;
+}
+
+/// Index of the first '\n' at or after `start`, or `source.len`. Compares 32
+/// bytes at a time: at comptime one vector compare costs far less than 32 steps
+/// of a byte loop, and source text is mostly long comment lines.
+fn lineEnd(source: []const u8, start: usize) usize {
+    const V = @Vector(32, u8);
+    var i = start;
+    while (i + 32 <= source.len) : (i += 32) {
+        const chunk: V = source[i..][0..32].*;
+        if (@reduce(.Or, chunk == @as(V, @splat('\n')))) break;
+    }
+    while (i < source.len and source[i] != '\n') i += 1;
+    return i;
 }
 
 fn beginPass(a: *Assembler) void {
