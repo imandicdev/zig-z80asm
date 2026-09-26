@@ -1,5 +1,6 @@
 """Downloads the third-party programs for `zig build programs` into a directory
-outside the repository, checks their SHA-256, and builds the SDCC reference.
+outside the repository, checks their SHA-256, prepares the Spectrum ROM source
+and builds the SDCC reference.
 
 Usage, from the repository root:
     python test/programs/fetch.py ../z80asm-thirdparty
@@ -44,6 +45,26 @@ def fetch(root):
         print("ok  %s" % rel)
 
 
+def prepare_spectrum(root):
+    """zx-spectrum-rom.asm with its INCLUDE of the system variables replaced by
+    that file and the OUTPUT line dropped (INCLUDE and OUTPUT are not in z80asm
+    0.1). Nothing else changes."""
+    base = os.path.join(root, "spectrum-rom")
+    sysvars = open(os.path.join(base, "zx-spectrum-sysvars.asm"), newline="").read()
+    out = []
+    for line in open(os.path.join(base, "zx-spectrum-rom.asm"), newline="").read().split("\n"):
+        words = line.split()
+        if len(words) == 2 and words[0].lower() == "include" and words[1] == '"zx-spectrum-sysvars.asm"':
+            out.append(sysvars)
+        elif len(words) == 2 and words[0].lower() == "output" and words[1] == '"48.ROM"':
+            out.append("")
+        else:
+            out.append(line)
+    with open(os.path.join(base, "zx-spectrum-rom.prepared.asm"), "w", newline="") as f:
+        f.write("\n".join(out))
+    print("ok  spectrum-rom/zx-spectrum-rom.prepared.asm")
+
+
 def build_sdcc_reference(root):
     out = os.path.join(root, "sdcc")
     os.makedirs(out, exist_ok=True)
@@ -73,4 +94,5 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     fetch(sys.argv[1])
+    prepare_spectrum(sys.argv[1])
     build_sdcc_reference(sys.argv[1])

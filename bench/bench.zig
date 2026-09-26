@@ -7,10 +7,8 @@
 
 const std = @import("std");
 const z80 = @import("z80asm");
-const spectrum = @import("spectrum");
 
-const source = @embedFile("spectrum_rom_asm");
-const sysvars = @embedFile("spectrum_sysvars_asm");
+const rom_source = @embedFile("spectrum_rom_asm");
 const rom = @embedFile("spectrum_48_rom");
 
 const runs = 25;
@@ -23,14 +21,13 @@ pub fn main(init: std.process.Init) !void {
     if (args.len != 3) std.process.fatal("usage: bench LINES MEDIUM.asm", .{});
     const lines = try std.fmt.parseInt(usize, args[1], 10);
 
-    const full = spectrum.prepare(try arena.alloc(u8, spectrum.preparedLength(source, sysvars)), source, sysvars);
-    const r = z80.assemble(full, .{}, workspace.buffers());
+    const r = z80.assemble(rom_source, .{}, workspace.buffers());
     if (!r.ok() or !std.mem.eql(u8, r.bytes, rom)) std.process.fatal("the ROM does not assemble to 48.rom", .{});
 
-    const medium = try slice(arena, full, lines);
+    const medium = try slice(arena, rom_source, lines);
     try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = args[2], .data = medium });
 
-    std.debug.print("full ROM   {d:>6} lines  {f}\n", .{ std.mem.count(u8, full, "\n"), time(init.io, full) });
+    std.debug.print("full ROM   {d:>6} lines  {f}\n", .{ std.mem.count(u8, rom_source, "\n"), time(init.io, rom_source) });
     std.debug.print("medium     {d:>6} lines  {f}\n", .{ std.mem.count(u8, medium, "\n"), time(init.io, medium) });
 }
 

@@ -21,7 +21,7 @@ The last form also assembles the Spectrum ROM at comptime, which is slow.
 | Origin of the text | The Complete Spectrum ROM Disassembly (Dr. Ian Logan, Dr. Frank O'Hara), with corrections and comments by others; sjasmplus adaptation by z00m |
 | Reference binary | `48.rom` from the Fuse emulator, SHA-1 `5ea7c2b824672e914525d1d5c419d71b84a426a2` (the value MAME lists for the 48K ROM) |
 | License | The ROM code is copyright Amstrad plc. Amstrad allows distribution of the ROMs for use with emulators but keeps the copyright (message by Cliff Lawson, comp.sys.sinclair, 1999-08-31, reproduced in the repository's LICENSE.md). It may not be sold or included in this repository. |
-| Preparation | The `include "zx-spectrum-sysvars.asm"` line is replaced by that file's text and the `OUTPUT "48.ROM"` line is dropped, because INCLUDE and OUTPUT are not in z80asm 0.1. No other change. |
+| Preparation | `fetch.py` writes `zx-spectrum-rom.prepared.asm`: the `include "zx-spectrum-sysvars.asm"` line is replaced by that file's text and the `OUTPUT "48.ROM"` line is dropped, because INCLUDE and OUTPUT are not in z80asm 0.1. No other change. |
 | Result | Identical: 16384 bytes, 0 differences, same SHA-1. At runtime this takes about 140 ms; at comptime (`-Dprograms-comptime=true`) the result is also identical, but compiling takes 28 minutes and 5 GB of memory with Zig 0.16.0. |
 
 ## Performance

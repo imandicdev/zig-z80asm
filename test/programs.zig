@@ -6,7 +6,6 @@
 const std = @import("std");
 const z80 = @import("z80asm");
 const options = @import("options");
-const spectrum = @import("spectrum.zig");
 
 var workspace: z80.Workspace(0x10000, 4096, 16) = undefined;
 
@@ -27,27 +26,18 @@ fn expectSame(name: []const u8, mode: []const u8, expected: []const u8, got: []c
     return error.TestExpectedEqual;
 }
 
-// ZX Spectrum 48K ROM, z00m128/zxs-rom (sjasmplus syntax), prepared as
-// described in spectrum.zig.
+// ZX Spectrum 48K ROM: z00m128/zxs-rom as prepared by fetch.py.
 
 const spectrum_source = @embedFile("spectrum_rom_asm");
-const spectrum_sysvars = @embedFile("spectrum_sysvars_asm");
 const spectrum_rom = @embedFile("spectrum_48_rom");
 
-var spectrum_buffer: [spectrum.preparedLength(spectrum_source, spectrum_sysvars)]u8 = undefined;
-
 test "ZX Spectrum 48K ROM is identical to the original" {
-    try expectImage("48.rom", spectrum.prepare(&spectrum_buffer, spectrum_source, spectrum_sysvars), spectrum_rom);
+    try expectImage("48.rom", spectrum_source, spectrum_rom);
 }
 
 test "ZX Spectrum 48K ROM at comptime" {
     if (!options.programs_comptime) return error.SkipZigTest;
-    const image = comptime blk: {
-        @setEvalBranchQuota(std.math.maxInt(u32));
-        var buf: [spectrum_buffer.len]u8 = undefined;
-        break :blk z80.comptimeAssemble(spectrum.prepare(&buf, spectrum_source, spectrum_sysvars), .{});
-    };
-    try expectSame("48.rom", "comptime", spectrum_rom, image);
+    try expectSame("48.rom", "comptime", spectrum_rom, comptime z80.comptimeAssemble(spectrum_source, .{}));
 }
 
 // SDCC: test/programs/sdcc_sample.c compiled with `sdcc -mz80 -S`, compared

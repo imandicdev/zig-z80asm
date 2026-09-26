@@ -83,7 +83,7 @@ pub fn build(b: *std.Build) void {
         });
         programs.addImport("z80asm", mod);
         programs.addOptions("options", build_options);
-        embedThirdParty(b, programs, dir, &.{ "spectrum_rom_asm", "spectrum_sysvars_asm", "spectrum_48_rom", "sdcc_sample_asm", "sdcc_sample_bin" });
+        embedThirdParty(b, programs, dir, &.{ "spectrum_rom_asm", "spectrum_48_rom", "sdcc_sample_asm", "sdcc_sample_bin" });
         const programs_step = b.step("programs", "Compare known programs with their original binaries");
         programs_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = programs })).step);
 
@@ -94,8 +94,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         bench.addImport("z80asm", mod);
-        bench.addImport("spectrum", b.createModule(.{ .root_source_file = b.path("test/spectrum.zig") }));
-        embedThirdParty(b, bench, dir, &.{ "spectrum_rom_asm", "spectrum_sysvars_asm", "spectrum_48_rom" });
+        embedThirdParty(b, bench, dir, &.{ "spectrum_rom_asm", "spectrum_48_rom" });
         const bench_run = b.addRunArtifact(b.addExecutable(.{ .name = "bench", .root_module = bench }));
         bench_run.addArg(b.fmt("{d}", .{b.option(usize, "bench-lines", "Lines in the medium slice") orelse 2500}));
         const medium = bench_run.addOutputFileArg("rom-medium.asm");
@@ -141,8 +140,7 @@ pub fn build(b: *std.Build) void {
 
 /// Files that test/programs/fetch.py puts in the -Dthirdparty directory.
 const third_party_files = [_]struct { name: []const u8, path: []const u8 }{
-    .{ .name = "spectrum_rom_asm", .path = "spectrum-rom/zx-spectrum-rom.asm" },
-    .{ .name = "spectrum_sysvars_asm", .path = "spectrum-rom/zx-spectrum-sysvars.asm" },
+    .{ .name = "spectrum_rom_asm", .path = "spectrum-rom/zx-spectrum-rom.prepared.asm" },
     .{ .name = "spectrum_48_rom", .path = "spectrum-rom/48.rom" },
     .{ .name = "sdcc_sample_asm", .path = "sdcc/sdcc_sample.asm" },
     .{ .name = "sdcc_sample_bin", .path = "sdcc/sdcc_sample.sdas.bin" },
