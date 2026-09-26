@@ -1,9 +1,10 @@
-# z80asm
+# zig-z80asm
 
-A Z80 assembler for Zig. The same code assembles at comptime, where the
-result is a `[]const u8` constant and errors are compile errors, and at
-runtime, where errors come back as data. It needs no allocator and does no
-I/O: the caller provides the output, symbol and diagnostic buffers.
+A Z80 assembler for Zig, as the package and module `z80asm`. The same code
+assembles at comptime, where the result is a `[]const u8` constant and
+errors are compile errors, and at runtime, where errors come back as data.
+It needs no allocator and does no I/O: the caller provides the output,
+symbol and diagnostic buffers.
 
 Source text and Zig calls go through the same path, so a program can be
 written in assembly, built from Zig code, or both.
@@ -12,8 +13,11 @@ Requires Zig 0.16.0.
 
 ## Use
 
-Add the package with `zig fetch --save` and the URL of this repository, then
-import the module in `build.zig`:
+```
+zig fetch --save git+https://github.com/imandicdev/zig-z80asm#v0.1.0
+```
+
+and import the module in `build.zig`:
 
 ```zig
 const z80asm = b.dependency("z80asm", .{ .target = target, .optimize = optimize });
