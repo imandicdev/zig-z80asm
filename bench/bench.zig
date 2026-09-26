@@ -62,7 +62,9 @@ fn time(io: std.Io, text: []const u8) Timing {
 }
 
 /// The first `lines` lines, plus an empty label for every symbol they use but
-/// do not define.
+/// do not define. The names come from the "undefined symbol" diagnostics, which
+/// is enough for this ROM; a cut where a missing label is used as an 8-bit
+/// value or a displacement would need a real value and is reported as fatal.
 fn slice(arena: std.mem.Allocator, full: []const u8, lines: usize) ![]const u8 {
     var end: usize = 0;
     for (0..lines) |_| {
