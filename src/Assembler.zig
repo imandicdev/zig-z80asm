@@ -498,8 +498,15 @@ fn unary(a: *Assembler, l: *Line) Error!Value {
         const v = try a.unary(l);
         return .{ .value = -%v.value, .known = v.known };
     }
-    // '#' marks an immediate in SDCC output ("ld a,#1", ".db #0x42").
-    if (l.eat(.plus) or l.eat(.hash)) return a.unary(l);
+    if (l.eat(.plus)) return a.unary(l);
+    if (l.peek().tag == .hash) {
+        const hash = l.take();
+        if (try a.hashHex(hash, l.peek())) |v| {
+            _ = l.take();
+            return v;
+        }
+        return a.unary(l);
+    }
     if (l.eat(.tilde)) {
         const v = try a.unary(l);
         return .{ .value = ~v.value, .known = v.known };
@@ -546,6 +553,23 @@ fn primary(a: *Assembler, l: *Line) Error!Value {
         .end => return a.fail("expected an expression before end of line", .{}),
         else => return a.fail("expected an expression, found '{s}'", .{t.text}),
     }
+}
+
+/// '#' is a hex prefix in sjasmplus ("#4000") and only marks an immediate in
+/// SDCC output ("#0x0a", "#_table", "#<(x)"). Returns the value when the digits
+/// after '#' can only be hex, null when '#' is the SDCC marker, and fails when
+/// the two readings give different values.
+fn hashHex(a: *Assembler, hash: Token, t: Token) Error!?Value {
+    if (t.col != hash.col + 1) return null;
+    if (t.tag != .number and t.tag != .identifier) return null;
+    var letter = false;
+    for (t.text) |c| {
+        if (!std.ascii.isHex(c)) return null;
+        if (!std.ascii.isDigit(c)) letter = true;
+    }
+    if (letter) return .{ .value = parseDigits(t.text, 16) orelse return a.fail("invalid number '#{s}'", .{t.text}) };
+    if (t.text.len == 1) return null;
+    return a.fail("'#{s}' is hex in sjasmplus and decimal in SDCC; write 0x{s} or the decimal value", .{ t.text, t.text });
 }
 
 /// 0x1F, $1F, 1Fh, 0b1010, 1010b or decimal. %1010 is handled in `primary`.

@@ -21,3 +21,10 @@
     DB %00001111
     AND %0001
     DEFB %10000000,%1
+; '#' followed by hex digits that include a letter is hex, as in sjasmplus
+    LD A,#FF
+    LD HL,#C000
+    LD HL,#4A00
+    LD A,#1B
+    LD A,#5
+    DB #0F,#E

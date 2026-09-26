@@ -34,6 +34,8 @@ pub const cases = [_]Case{
     .{ .name = "register_in_expression", .source = "  DW A\n", .expect = "line 1: register 'A' used in an expression" },
     .{ .name = "missing_rparen", .source = "  LD A,(HL\n", .expect = "line 1: expected ')' before end of line" },
     .{ .name = "missing_operand", .source = "  LD A,\n", .expect = "line 1: expected an expression before end of line" },
+    .{ .name = "ambiguous_hash_number", .source = "  LD HL,#4000\n", .expect = "line 1: '#4000' is hex in sjasmplus and decimal in SDCC; write 0x4000 or the decimal value" },
+    .{ .name = "hash_number_too_large", .source = "  DW #FFFFFFFFF\n", .expect = "line 1: invalid number '#FFFFFFFFF'" },
     .{ .name = "invalid_hex_digit", .source = "  LD A,0x1G\n", .expect = "line 1: invalid number '0x1G'" },
     .{ .name = "empty_hex", .source = "  LD A,0x\n", .expect = "line 1: invalid number '0x'" },
     .{ .name = "stray_character", .source = "  LD A,@\n", .expect = "line 1: unexpected character '@'" },
