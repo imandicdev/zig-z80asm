@@ -360,7 +360,7 @@ fn displacementOf(a: *Assembler, v: Value) i8 {
 /// Offset of a JR/DJNZ target from the end of the 2-byte instruction.
 fn relativeOf(a: *Assembler, target: Value) i8 {
     if (!target.known) return 0;
-    const offset = target.value - @as(i32, @intCast(a.statement_pc + 2));
+    const offset = @as(i64, target.value) - (a.statement_pc + 2);
     if (offset < -128 or offset > 127) {
         a.report("relative jump out of range ({d} bytes)", .{offset});
         return 0;
@@ -481,6 +481,8 @@ fn apply(a: *Assembler, op: Operator, lhs: Value, rhs: Value) Value {
                 if (known) a.report("division by zero", .{});
                 break :blk 0;
             }
+            // minInt(i32) / -1 does not fit; wrap it like the other operators.
+            if (y == -1) break :blk if (op == .div) 0 -% x else 0;
             break :blk if (op == .div) @divTrunc(x, y) else @rem(x, y);
         },
     };

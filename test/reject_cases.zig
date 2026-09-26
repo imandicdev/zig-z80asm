@@ -18,6 +18,8 @@ pub const cases = [_]Case{
     .{ .name = "rst_target", .source = "  RST 5\n", .expect = "line 1: RST target must be one of 0x00, 0x08, ..., 0x38" },
     .{ .name = "interrupt_mode", .source = "  IM 3\n", .expect = "line 1: interrupt mode must be 0, 1 or 2" },
     .{ .name = "bit_number", .source = "  BIT 8,A\n", .expect = "line 1: bit number 8 out of range 0..7" },
+    .{ .name = "division_overflow", .source = "  DW (-2147483647-1)/-1\n", .expect = "line 1: value -2147483648 does not fit in 16 bits" },
+    .{ .name = "relative_jump_huge_target", .source = "  JR -2147483647\n", .expect = "line 1: relative jump out of range (-2147483649 bytes)" },
     .{ .name = "division_by_zero", .source = "  DB 1/0\n", .expect = "line 1: division by zero" },
     .{ .name = "undefined_symbol", .source = "  JP nowhere\n", .expect = "line 1: undefined symbol 'nowhere'" },
     .{ .name = "local_label_other_scope", .source = "f:\n1$: NOP\ng: JR 1$\n", .expect = "line 3: undefined symbol '1$'" },
