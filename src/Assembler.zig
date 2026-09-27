@@ -111,38 +111,30 @@ pub const Value = struct {
     known: bool = true,
 };
 
-/// Everything that starts over in each pass. Symbols and `pass` carry over.
-const PassState = struct {
-    diagnostic_count: usize = 0,
-    diagnostics_dropped: usize = 0,
-    pc: u32 = 0,
-    /// Address of the current statement, the value of `$`.
-    statement_pc: u32 = 0,
-    /// Set by END. The rest of a source is not read, and code that a Zig body
-    /// emits afterwards is an error.
-    ended: bool = false,
-    /// Uses of symbols without a value in this pass.
-    unresolved: u32 = 0,
-    /// Last symbol whose value differs from the previous pass.
-    changed: ?[]const u8 = null,
-    /// Last ordinary label; scope of the following sdas local labels.
-    scope: []const u8 = "",
-    /// Current sdas area when it is not _CODE. Areas are placed by the SDCC
-    /// linker, which z80asm does not replace, so only _CODE may hold anything.
-    other_area: ?[]const u8 = null,
-    empty: bool = true,
-    low: u32 = 0,
-    high: u32 = 0,
-    overlap_reported: bool = false,
-};
-
 options: Options,
 out: []u8,
 symbols: []Symbol,
 symbol_count: usize = 0,
 diagnostics: []Diagnostic,
+diagnostic_count: usize = 0,
+diagnostics_dropped: usize = 0,
 pass: u8 = 0,
+pc: u32 = 0,
+/// Address of the current statement, the value of `$`.
+statement_pc: u32 = 0,
 line_number: u32 = 0,
+/// Set by END. The rest of a source is not read, and code that a Zig body
+/// emits afterwards is an error.
+ended: bool = false,
+/// Uses of symbols without a value in this pass.
+unresolved: u32 = 0,
+/// Last symbol whose value differs from the previous pass.
+changed: ?[]const u8 = null,
+/// Last ordinary label; scope of the following sdas local labels.
+scope: []const u8 = "",
+/// Current sdas area when it is not _CODE. Areas are placed by the SDCC
+/// linker, which z80asm does not replace, so only _CODE may hold anything.
+other_area: ?[]const u8 = null,
 /// The line being assembled, as given by the caller. Tokens point into a
 /// temporary copy of it.
 original: []const u8 = "",
@@ -150,7 +142,10 @@ original: []const u8 = "",
 /// of run(): at comptime, changing an element of a [1024]usize field of this
 /// struct costs about 8 KB of compiler memory per write.
 written: []u8,
-state: PassState = .{},
+empty: bool = true,
+low: u32 = 0,
+high: u32 = 0,
+overlap_reported: bool = false,
 
 /// Runs `body(ctx, assembler)` once per pass until every symbol has a stable
 /// value. The body is executed several times, so it must not have side effects
@@ -177,18 +172,18 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
         };
         // A second pass is needed only for forward references, and later
         // passes only while some symbol still moves.
-        if (a.pass == 1 and a.state.unresolved == 0) break;
-        if (a.pass > 1 and a.state.changed == null) break;
+        if (a.pass == 1 and a.unresolved == 0) break;
+        if (a.pass > 1 and a.changed == null) break;
         if (a.pass == max_passes) {
-            a.report("phase error: label '{s}' did not settle", .{a.state.changed.?});
+            a.report("phase error: label '{s}' did not settle", .{a.changed.?});
             break;
         }
     }
     return .{
-        .origin = if (a.state.empty) options.origin else @intCast(a.state.low),
-        .bytes = a.out[0 .. a.state.high - a.state.low],
-        .diagnostics = a.diagnostics[0..a.state.diagnostic_count],
-        .diagnostics_dropped = a.state.diagnostics_dropped,
+        .origin = if (a.empty) options.origin else @intCast(a.low),
+        .bytes = a.out[0 .. a.high - a.low],
+        .diagnostics = a.diagnostics[0..a.diagnostic_count],
+        .diagnostics_dropped = a.diagnostics_dropped,
         .passes = a.pass,
     };
 }
@@ -202,7 +197,7 @@ fn assembleLines(source: []const u8, a: *Assembler) Error!void {
     var reader: LineReader = .{ .source = source };
     var start: usize = 0;
     var number: u32 = 0;
-    while (start <= source.len and !a.state.ended) {
+    while (start <= source.len and !a.ended) {
         const next = reader.line(start);
         const text = source[start..next.end];
         number += 1;
@@ -265,21 +260,35 @@ fn lineEnd(text: []const u8) usize {
     return i;
 }
 
+/// The per-pass fields are reset one by one. Kept in a struct and reset with one
+/// assignment, they made the Spectrum ROM about 0.5 s slower at comptime.
 fn beginPass(a: *Assembler) void {
     a.pass += 1;
-    a.state = .{ .pc = a.options.origin, .statement_pc = a.options.origin };
+    a.pc = a.options.origin;
+    a.statement_pc = a.pc;
+    a.ended = false;
+    a.unresolved = 0;
+    a.changed = null;
+    a.scope = "";
+    a.other_area = null;
+    a.diagnostic_count = 0;
+    a.diagnostics_dropped = 0;
     @memset(a.written, 0);
+    a.empty = true;
+    a.low = 0;
+    a.high = 0;
+    a.overlap_reported = false;
 }
 
 /// Records a diagnostic and continues. Used for value errors, so that a wrong
 /// value never changes the size of the output.
 fn report(a: *Assembler, comptime fmt: []const u8, args: anytype) void {
-    if (a.state.diagnostic_count == a.diagnostics.len) {
-        a.state.diagnostics_dropped += 1;
+    if (a.diagnostic_count == a.diagnostics.len) {
+        a.diagnostics_dropped += 1;
         return;
     }
-    const d = &a.diagnostics[a.state.diagnostic_count];
-    a.state.diagnostic_count += 1;
+    const d = &a.diagnostics[a.diagnostic_count];
+    a.diagnostic_count += 1;
     d.line = a.line_number;
     const text = std.fmt.bufPrint(&d.buf, fmt, args) catch &d.buf;
     d.len = @intCast(text.len);
@@ -293,18 +302,18 @@ fn fail(a: *Assembler, comptime fmt: []const u8, args: anytype) Error {
 
 /// Address of the next byte.
 pub fn here(a: *const Assembler) u16 {
-    return @truncate(a.state.pc);
+    return @truncate(a.pc);
 }
 
 pub fn org(a: *Assembler, address: u16) void {
-    a.state.pc = address;
+    a.pc = address;
 }
 
 /// `name` is kept, not copied; see `run`.
 pub fn label(a: *Assembler, name: []const u8) Error!void {
     try a.checkArea();
-    try a.define(name, .{ .value = @intCast(a.state.pc) });
-    if (!isLocal(name)) a.state.scope = name;
+    try a.define(name, .{ .value = @intCast(a.pc) });
+    if (!isLocal(name)) a.scope = name;
 }
 
 /// `name` is kept, not copied; see `run`.
@@ -322,7 +331,7 @@ pub fn bytes(a: *Assembler, data: []const u8) Error!void {
 
 /// Evaluates an expression such as "msg+1" or "$-start".
 pub fn eval(a: *Assembler, text: []const u8) Error!Value {
-    a.state.statement_pc = a.state.pc;
+    a.statement_pc = a.pc;
     var l = try a.tokenize(text);
     try a.expectFits(&l);
     const v = try a.expression(&l);
@@ -352,42 +361,42 @@ pub fn displacement(a: *Assembler, text: []const u8) Error!i8 {
 }
 
 fn checkArea(a: *Assembler) Error!void {
-    if (a.state.other_area) |area| return a.fail("only the _CODE area is supported, not '{s}'", .{area});
+    if (a.other_area) |area| return a.fail("only the _CODE area is supported, not '{s}'", .{area});
 }
 
 fn store(a: *Assembler, b: u8) Error!void {
-    if (a.state.ended) return a.fail("code after END", .{});
+    if (a.ended) return a.fail("code after END", .{});
     try a.checkArea();
-    if (a.state.pc > 0xFFFF) return a.fail("address beyond 0xFFFF", .{});
-    const addr = a.state.pc;
+    if (a.pc > 0xFFFF) return a.fail("address beyond 0xFFFF", .{});
+    const addr = a.pc;
     const bit = @as(u8, 1) << @as(u3, @truncate(addr));
     if (a.written[addr >> 3] & bit != 0) {
-        if (!a.state.overlap_reported) a.report("overlap at 0x{X:0>4}: address written twice", .{addr});
-        a.state.overlap_reported = true;
+        if (!a.overlap_reported) a.report("overlap at 0x{X:0>4}: address written twice", .{addr});
+        a.overlap_reported = true;
     }
     a.written[addr >> 3] |= bit;
 
-    if (a.state.empty) {
-        a.state.empty = false;
-        a.state.low = addr;
-        a.state.high = addr;
+    if (a.empty) {
+        a.empty = false;
+        a.low = addr;
+        a.high = addr;
     }
-    if (addr < a.state.low) {
+    if (addr < a.low) {
         // An ORG went below everything written so far: move the image up.
-        const shift = a.state.low - addr;
-        const used = a.state.high - a.state.low;
+        const shift = a.low - addr;
+        const used = a.high - a.low;
         if (used + shift > a.out.len) return a.fail("output buffer too small ({d} bytes)", .{a.out.len});
         std.mem.copyBackwards(u8, a.out[shift..][0..used], a.out[0..used]);
         @memset(a.out[0..shift], 0);
-        a.state.low = addr;
+        a.low = addr;
     }
-    if (addr >= a.state.high) {
-        if (addr + 1 - a.state.low > a.out.len) return a.fail("output buffer too small ({d} bytes)", .{a.out.len});
-        @memset(a.out[a.state.high - a.state.low .. addr - a.state.low], 0);
-        a.state.high = addr + 1;
+    if (addr >= a.high) {
+        if (addr + 1 - a.low > a.out.len) return a.fail("output buffer too small ({d} bytes)", .{a.out.len});
+        @memset(a.out[a.high - a.low .. addr - a.low], 0);
+        a.high = addr + 1;
     }
-    a.out[addr - a.state.low] = b;
-    a.state.pc += 1;
+    a.out[addr - a.low] = b;
+    a.pc += 1;
 }
 
 /// sdas reusable labels: digits followed by '$', local to the region between
@@ -396,12 +405,14 @@ fn isLocal(name: []const u8) bool {
     return name.len > 1 and name[name.len - 1] == '$' and std.ascii.isDigit(name[0]);
 }
 
-/// Hash of the name and, for local labels, the scope.
+/// FNV-1a over the name and, for local labels, the scope. Written out because
+/// std.hash.Fnv1a_32, with its init, update and final calls, made the Spectrum
+/// ROM about 0.25 s slower at comptime.
 fn hashName(name: []const u8, scope: []const u8) u32 {
-    var h: std.hash.Fnv1a_32 = .init();
-    h.update(name);
-    h.update(scope);
-    return h.final();
+    var h: u32 = 0x811C9DC5;
+    for (name) |c| h = (h ^ c) *% 0x01000193;
+    for (scope) |c| h = (h ^ c) *% 0x01000193;
+    return h;
 }
 
 /// The slot holding `name`, or the free slot where it belongs. The table is
@@ -418,7 +429,7 @@ fn slot(a: *Assembler, name: []const u8, scope: []const u8, hash: u32) *Symbol {
 
 /// The scope `name` is looked up in: the current one for local labels.
 fn scopeOf(a: *const Assembler, name: []const u8) []const u8 {
-    return if (isLocal(name)) a.state.scope else "";
+    return if (isLocal(name)) a.scope else "";
 }
 
 fn find(a: *Assembler, name: []const u8) ?*Symbol {
@@ -437,7 +448,7 @@ fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
     const s = a.slot(name, scope, hash);
     if (s.name.len != 0) {
         if (s.pass == a.pass) return a.fail("duplicate symbol '{s}'", .{name});
-        if (!std.meta.eql(s.value, v)) a.state.changed = s.name;
+        if (!std.meta.eql(s.value, v)) a.changed = s.name;
         s.value = v;
         s.pass = a.pass;
         return;
@@ -445,19 +456,19 @@ fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
     if (a.symbol_count == capacity) return a.fail("too many symbols (capacity {d})", .{capacity});
     s.* = .{ .name = name, .scope = scope, .hash = hash, .value = v, .pass = a.pass };
     a.symbol_count += 1;
-    if (a.pass > 1) a.state.changed = name;
+    if (a.pass > 1) a.changed = name;
 }
 
 fn symbolValue(a: *Assembler, name: []const u8) Value {
     if (a.find(name)) |s| {
         if (!s.value.known) {
-            a.state.unresolved += 1;
+            a.unresolved += 1;
             // Defined, but only in terms of itself or of undefined symbols.
             if (a.pass > 1) a.report("symbol '{s}' has no value", .{name});
         }
         return s.value;
     }
-    a.state.unresolved += 1;
+    a.unresolved += 1;
     // In pass 1 this may be a label further down; only later passes know.
     if (a.pass > 1) a.report("undefined symbol '{s}'", .{name});
     return .{ .value = 0, .known = false };
@@ -502,7 +513,7 @@ const jr_len = isa.jr(0).len;
 /// Offset of a JR/DJNZ target from the end of the instruction.
 fn relativeOf(a: *Assembler, target: Value) i8 {
     if (!target.known) return 0;
-    const offset = @as(i64, target.value) - (a.state.statement_pc + jr_len);
+    const offset = @as(i64, target.value) - (a.statement_pc + jr_len);
     return std.math.cast(i8, offset) orelse {
         a.report("relative jump out of range ({d} bytes)", .{offset});
         return 0;
@@ -721,7 +732,7 @@ fn primary(a: *Assembler, l: *Line) Error!Value {
             if (try it.next(a) != null) return a.fail("string {s} used as a number", .{t.text});
             return .{ .value = c };
         },
-        .dollar => return .{ .value = @intCast(a.state.statement_pc) },
+        .dollar => return .{ .value = @intCast(a.statement_pc) },
         // Where an operand is expected, '%' starts a binary number ("DB %0101").
         .percent => {
             const digits = l.peek();
@@ -1107,7 +1118,7 @@ pub fn line(a: *Assembler, text: []const u8) Error!void {
 /// `copy` holds the same bytes as `original` and is what gets parsed; names
 /// that outlive the line are taken from `original` (see `kept`).
 fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!void {
-    a.state.statement_pc = a.state.pc;
+    a.statement_pc = a.pc;
     a.original = original;
     var l = try a.tokenize(copy);
 
@@ -1223,13 +1234,13 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
         .end => {
             // "END start" names the entry point, which a flat image does not need.
             if (!l.atEnd()) _ = try a.expression(l);
-            a.state.ended = true;
+            a.ended = true;
         },
         .equ => a.fail("EQU needs a label", .{}),
         .@".area" => {
             const name = l.take();
             if (name.tag != .identifier) return a.fail("expected an area name, found '{s}'", .{name.text});
-            a.state.other_area = if (std.mem.eql(u8, name.text, "_CODE")) null else a.kept(name);
+            a.other_area = if (std.mem.eql(u8, name.text, "_CODE")) null else a.kept(name);
             l.skipRest(); // "(ABS)" and other attributes
         },
         .@".globl", .@".module", .@".optsdcc" => l.skipRest(),
