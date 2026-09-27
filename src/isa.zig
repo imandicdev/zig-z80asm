@@ -123,12 +123,13 @@ pub fn rld() Encoding {
 }
 
 /// Interrupt mode 0, 1 or 2.
-pub fn im(mode: u2) Encoding {
+pub const Im = enum(u2) { mode0, mode1, mode2 };
+
+pub fn im(mode: Im) Encoding {
     return enc2(0xED, switch (mode) {
-        0 => 0x46,
-        1 => 0x56,
-        2 => 0x5E,
-        3 => unreachable,
+        .mode0 => 0x46,
+        .mode1 => 0x56,
+        .mode2 => 0x5E,
     });
 }
 

@@ -19,9 +19,16 @@ pub const max_line_tokens = 64;
 pub const message_capacity = 120;
 
 /// Tokens point into temporary copies of source lines. In tests and Debug
-/// builds each copy is overwritten with 0xAA after its line, so a name that
-/// was kept without going through `kept` turns into garbage and fails a test.
+/// builds each copy is overwritten with `poison_byte` after its line, so a name
+/// that was kept without going through `kept` turns into garbage and fails a test.
 const poison_copies = builtin.is_test or builtin.mode == .Debug;
+const poison_byte = 0xAA;
+
+/// Hash tables are kept at most half full, so a probe always reaches a free
+/// slot: a table needs this many slots for each entry it holds.
+pub const slots_per_entry = 2;
+
+const address_space = 0x10000;
 
 pub const Error = error{AssemblyFailed};
 
@@ -154,7 +161,7 @@ state: PassState = .{},
 /// a reused formatting buffer would rename earlier symbols.
 pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (@TypeOf(ctx), *Assembler) Error!void) Result {
     const slots = if (buffers.symbols.len == 0) 0 else std.math.floorPowerOfTwo(usize, buffers.symbols.len);
-    var written: [0x10000 / 8]u8 = undefined;
+    var written: [address_space / @bitSizeOf(u8)]u8 = undefined;
     var a: Assembler = .{
         .options = options,
         .out = buffers.output,
@@ -203,7 +210,7 @@ fn assembleLines(source: []const u8, a: *Assembler) Error!void {
         a.assembleLine(text, next.copy orelse text) catch |err| switch (err) {
             error.AssemblyFailed => {}, // already in the diagnostics
         };
-        if (poison_copies) if (next.copy) |c| @memset(c, 0xAA);
+        if (poison_copies) if (next.copy) |c| @memset(c, poison_byte);
         start = next.end + 1;
     }
     a.line_number = 0;
@@ -214,8 +221,10 @@ fn assembleLines(source: []const u8, a: *Assembler) Error!void {
 /// its offset in the file, so reading it byte by byte is quadratic; a block
 /// copied with one @memcpy pays that cost once.
 const LineReader = struct {
+    const block_size = 4096;
+
     source: []const u8,
-    buf: [4096]u8 = undefined,
+    buf: [block_size]u8 = undefined,
     /// Source offset of buf[0].
     buf_start: usize = 0,
     buf_len: usize = 0,
@@ -245,10 +254,11 @@ const LineReader = struct {
 /// Index of the first '\n' in `text`, or `text.len`. Compares 32 bytes at a
 /// time, as one vector compare is much cheaper than 32 loop steps at comptime.
 fn lineEnd(text: []const u8) usize {
-    const V = @Vector(32, u8);
+    const vector_len = 32;
+    const V = @Vector(vector_len, u8);
     var i: usize = 0;
-    while (i + 32 <= text.len) : (i += 32) {
-        const chunk: V = text[i..][0..32].*;
+    while (i + vector_len <= text.len) : (i += vector_len) {
+        const chunk: V = text[i..][0..vector_len].*;
         if (@reduce(.Or, chunk == @as(V, @splat('\n')))) break;
     }
     while (i < text.len and text[i] != '\n') i += 1;
@@ -419,7 +429,7 @@ fn find(a: *Assembler, name: []const u8) ?*Symbol {
 }
 
 fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
-    const capacity = a.symbols.len / 2;
+    const capacity = a.symbols.len / slots_per_entry;
     // Also keeps `slot` away from a table without slots.
     if (capacity == 0) return a.fail("too many symbols (capacity 0)", .{});
     const scope = a.scopeOf(name);
@@ -465,12 +475,12 @@ fn outside(v: Value, min: i32, max: i32) bool {
 /// and the tool and comptimeAssemble never write the bytes of a result with
 /// diagnostics.
 fn byteOf(a: *Assembler, v: Value) u8 {
-    if (outside(v, -128, 255)) a.report("value {d} does not fit in 8 bits", .{v.value});
+    if (outside(v, std.math.minInt(i8), std.math.maxInt(u8))) a.report("value {d} does not fit in 8 bits", .{v.value});
     return @truncate(@as(u32, @bitCast(v.value)));
 }
 
 fn wordOf(a: *Assembler, v: Value) u16 {
-    if (outside(v, -32768, 65535)) a.report("value {d} does not fit in 16 bits", .{v.value});
+    if (outside(v, std.math.minInt(i16), std.math.maxInt(u16))) a.report("value {d} does not fit in 16 bits", .{v.value});
     return @truncate(@as(u32, @bitCast(v.value)));
 }
 
@@ -479,7 +489,7 @@ fn wordOf(a: *Assembler, v: Value) u16 {
 /// `assemble` returns with the diagnostic then holds (IX+0), not a wrapped
 /// displacement that looks valid, such as (IX-56) for (IX+200).
 fn displacementOf(a: *Assembler, v: Value) i8 {
-    if (outside(v, -128, 127)) {
+    if (outside(v, std.math.minInt(i8), std.math.maxInt(i8))) {
         a.report("index displacement {d} out of range -128..127", .{v.value});
         return 0;
     }
@@ -490,15 +500,14 @@ fn displacementOf(a: *Assembler, v: Value) i8 {
 fn relativeOf(a: *Assembler, target: Value) i8 {
     if (!target.known) return 0;
     const offset = @as(i64, target.value) - (a.state.statement_pc + 2);
-    if (offset < -128 or offset > 127) {
+    return std.math.cast(i8, offset) orelse {
         a.report("relative jump out of range ({d} bytes)", .{offset});
         return 0;
-    }
-    return @intCast(offset);
+    };
 }
 
 fn bitOf(a: *Assembler, v: Value) u3 {
-    if (outside(v, 0, 7)) a.report("bit number {d} out of range 0..7", .{v.value});
+    if (outside(v, 0, std.math.maxInt(u3))) a.report("bit number {d} out of range 0..7", .{v.value});
     return @truncate(@as(u32, @bitCast(v.value)));
 }
 
@@ -771,7 +780,7 @@ fn register(name: []const u8) ?Reg {
 /// assembler runs at comptime.
 fn NameTable(comptime E: type) type {
     const fields = @typeInfo(E).@"enum".fields;
-    const size = std.math.ceilPowerOfTwoAssert(usize, 2 * fields.len);
+    const size = std.math.ceilPowerOfTwoAssert(usize, slots_per_entry * fields.len);
     const max_len = blk: {
         var m: usize = 0;
         for (fields) |f| m = @max(m, f.name.len);
@@ -1065,11 +1074,13 @@ fn keyword(name: []const u8) ?Keyword {
 /// Assembles one line of source text. Labels defined on the line keep
 /// pointing into `text`; see `run`.
 pub fn line(a: *Assembler, text: []const u8) Error!void {
-    // Work on a copy for the same reason as LineReader.
-    var buf: [256]u8 = undefined;
+    // Work on a copy for the same reason as LineReader. Longer lines are parsed
+    // in place.
+    const copy_size = 256;
+    var buf: [copy_size]u8 = undefined;
     if (text.len > buf.len) return a.assembleLine(text, text);
     @memcpy(buf[0..text.len], text);
-    defer if (poison_copies) @memset(buf[0..text.len], 0xAA);
+    defer if (poison_copies) @memset(buf[0..text.len], poison_byte);
     return a.assembleLine(text, buf[0..text.len]);
 }
 
@@ -1130,7 +1141,7 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
     }
 
     return switch (kw) {
-        .db, .defb, .defm, .dm, .@".db", .@".byte", .dw, .defw, .@".dw", .@".word" => unreachable, // above
+        .db, .defb, .defm, .dm, .@".db", .@".byte", .dw, .defw, .@".dw", .@".word" => unreachable, // DB and DW return from the switch above
         inline .nop,
         .halt,
         .ei,
@@ -1401,8 +1412,9 @@ fn relativeJump(a: *Assembler, l: *Line, op: enum { jr, djnz }) Error!void {
 }
 
 fn restart(a: *Assembler, l: *Line) Error!void {
+    const target_bits = 0x38; // 0x00, 0x08, ..., 0x38: only bits 3 to 5
     const v = try a.expression(l);
-    if (outside(v, 0, 0x38) or (v.known and @rem(v.value, 8) != 0)) {
+    if (v.known and v.value & ~@as(i32, target_bits) != 0) {
         a.report("RST target must be one of 0x00, 0x08, ..., 0x38", .{});
         return a.emit(isa.rst(0));
     }
@@ -1452,11 +1464,12 @@ fn output(a: *Assembler, l: *Line) Error!void {
 
 fn interruptMode(a: *Assembler, l: *Line) Error!void {
     const v = try a.expression(l);
-    if (outside(v, 0, 2)) {
+    if (!v.known) return a.emit(isa.im(.mode0));
+    const mode = std.enums.fromInt(isa.Im, v.value) orelse {
         a.report("interrupt mode must be 0, 1 or 2", .{});
-        return a.emit(isa.im(0));
-    }
-    return a.emit(isa.im(if (v.known) @intCast(v.value) else 0));
+        return a.emit(isa.im(.mode0));
+    };
+    return a.emit(isa.im(mode));
 }
 
 const BitOp = enum { bit, set, res };
@@ -1532,18 +1545,19 @@ const StringIterator = struct {
         if (c != '\\' or it.quote != '"') return c;
         const e = it.text[it.pos];
         it.pos += 1;
+        const ascii = std.ascii.control_code;
         return switch (std.ascii.toLower(e)) {
             '\\', '\'', '"', '?' => e,
-            '0' => 0,
-            'a' => 7,
-            'b' => 8,
-            'd' => 0x7F,
-            'e' => 0x1B,
-            'f' => 0x0C,
-            'n' => 0x0A,
-            'r' => 0x0D,
-            't' => 0x09,
-            'v' => 0x0B,
+            '0' => ascii.nul,
+            'a' => ascii.bel,
+            'b' => ascii.bs,
+            'd' => ascii.del,
+            'e' => ascii.esc,
+            'f' => ascii.ff,
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            'v' => ascii.vt,
             else => a.fail("unknown escape '\\{c}' in string", .{e}),
         };
     }

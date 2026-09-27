@@ -4,6 +4,13 @@
 const std = @import("std");
 const z80 = @import("z80asm");
 
+/// Room for the whole address space, and for many more symbols and diagnostics
+/// than the comptime defaults.
+const output_size = 0x10000;
+const symbol_slots = 16384;
+const diagnostic_count = 64;
+const max_source_size = 16 << 20;
+
 const usage =
     \\usage: z80asm [--origin ADDR] INPUT.asm OUTPUT.bin
     \\
@@ -41,10 +48,10 @@ pub fn main(init: std.process.Init) !void {
     const output_path = output orelse std.process.fatal("{s}", .{usage});
 
     const cwd = std.Io.Dir.cwd();
-    const source = cwd.readFileAlloc(init.io, input_path, arena, .limited(16 << 20)) catch |err|
+    const source = cwd.readFileAlloc(init.io, input_path, arena, .limited(max_source_size)) catch |err|
         std.process.fatal("cannot read '{s}': {t}", .{ input_path, err });
 
-    const workspace = try arena.create(z80.Workspace(0x10000, 16384, 64));
+    const workspace = try arena.create(z80.Workspace(output_size, symbol_slots, diagnostic_count));
     const result = z80.assemble(source, options, workspace.buffers());
     if (!result.ok()) {
         for (result.diagnostics) |d| {

@@ -47,7 +47,7 @@ FIXED = {
     "RLCA": "rlca()", "RRCA": "rrca()", "RLA": "rla()", "RRA": "rra()",
     "DAA": "daa()", "CPL": "cpl()", "SCF": "scf()", "CCF": "ccf()",
     "NEG": "neg()", "RETN": "retn()", "RETI": "reti()", "RRD": "rrd()", "RLD": "rld()",
-    "IM 0": "im(0)", "IM 1": "im(1)", "IM 2": "im(2)",
+    "IM 0": "im(.mode0)", "IM 1": "im(.mode1)", "IM 2": "im(.mode2)",
     "LD I,A": "ldIA()", "LD R,A": "ldRA()", "LD A,I": "ldAI()", "LD A,R": "ldAR()",
     "LDI": "ldi()", "CPI": "cpi()", "INI": "ini()", "OUTI": "outi()",
     "LDD": "ldd()", "CPD": "cpd()", "IND": "ind()", "OUTD": "outd()",

@@ -33,7 +33,7 @@ pub const ComptimeOptions = struct {
 };
 
 fn ComptimeWorkspace(comptime options: ComptimeOptions) type {
-    const slots = std.math.ceilPowerOfTwoAssert(usize, @max(1, 2 * options.max_symbols));
+    const slots = std.math.ceilPowerOfTwoAssert(usize, @max(1, Assembler.slots_per_entry * options.max_symbols));
     return Workspace(0x10000, slots, options.max_diagnostics);
 }
 
