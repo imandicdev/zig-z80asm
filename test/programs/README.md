@@ -27,20 +27,31 @@ The last form also assembles the Spectrum ROM at comptime, which is slow.
 ## Performance
 
 The full Spectrum ROM (17,699 lines after preparation), before the
-optimizations and in 0.1.0. Zig 0.16.0, Windows x86_64.
+optimizations, in 0.1.0 and in 0.1.1. Zig 0.16.0, Windows x86_64.
 
-| | Before | 0.1.0 |
-|---|---|---|
-| Comptime: compile time | 28 min | 50 s |
-| Comptime: peak memory | about 5 GB | 1,067 MB |
-| Runtime, ReleaseFast | 13.1 ms | 3.4 ms |
-| Runtime, Debug | 107.6 ms | 40.7 ms |
+| | Before | 0.1.0 | 0.1.1 |
+|---|---|---|---|
+| Comptime: compile time | 28 min | 50 s | 50 s |
+| Comptime: peak memory | about 5 GB | 1,067 MB | 1,067 MB |
+| Runtime, ReleaseFast | 13.1 ms | 3.4 ms | 3.5 ms |
+| Runtime, Debug | 107.6 ms | 40.7 ms | 40.5 ms |
 
 Comptime is the test's compile step with `-Dprograms-comptime=true`, in a
 Debug build as the tests use, so it includes the 0xAA overwrite of line
-copies. Peak memory for 0.1.0 is the largest working set of any zig
-process during that build, from an empty cache; "before" is Zig's own
+copies. Peak memory for 0.1.0 and 0.1.1 is the largest working set of any
+zig process during that build, from an empty cache; "before" is Zig's own
 rounded MaxRSS ("5G"). Runtime is the median of 25 runs of `zig build bench`.
+
+0.1.1 is a code review cleanup with no new features. The table gives 0.1.0
+as it was measured for that release. Measured on the same day as 0.1.1 (two
+comptime builds and five `zig build bench` runs each), 0.1.0 took 48 s,
+1,069 MB, 3.38 ms and 40.46 ms, and 0.1.1 50 s, 1,067 MB, 3.49 ms and
+40.47 ms: the same in Debug, about 3% slower in ReleaseFast and 4% at
+comptime. One cause was found and fixed: register lookups hashed names up
+to 6 characters long instead of 3. Undoing the other changes one at a
+time moved ReleaseFast by at most 0.04 ms each, within the spread of
+repeated runs; since Debug does not change, what is left looks like the
+layout effect described under Step by step.
 
 The goal of 1 GB is missed by about 7%. What is left is spread over parsing,
 expressions and encoding at comptime, where every intermediate value stays
@@ -66,8 +77,9 @@ takes for a 10-line slice.
 | Overlap bitmap as a byte slice | 3.1 ms / 39.1 ms | 8 s, 312 MB | 49 s, 1,068 MB |
 | Line copies overwritten after use (Debug) | 3.1 ms / 39.5 ms | | 48 s, 1,076 MB |
 | DB and DW without a limit on values (not an optimization) | 3.4 ms / 40.7 ms | | 50 s, 1,067 MB |
+| Code review cleanup, 0.1.1 (not an optimization) | 3.5 ms / 40.5 ms | | 50 s, 1,067 MB |
 
-The last change costs 0.3 ms at runtime without running any new code on
+The DB and DW change costs 0.3 ms at runtime without running any new code on
 the ROM: the DB and DW lines there all fit in one token buffer. Moving the
 new dispatch back out of `statement()` made it 3.5 ms, so the difference
 comes from how the compiler lays out the changed functions.

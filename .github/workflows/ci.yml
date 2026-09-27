@@ -16,6 +16,11 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
       - run: zig fmt --check src test bench compare build.zig
+      - run: python tools/test_smell_check.py
+      - run: python tools/smell_check.py
       - run: zig build test --summary all
       - run: zig build

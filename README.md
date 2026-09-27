@@ -194,7 +194,7 @@ Four, all deliberate:
   comptime options only at comptime).
 
 The full Spectrum ROM, 17,699 lines, assembles at comptime in 50 s with a
-peak of about 1 GB of compiler memory, and at runtime in 3.4 ms
+peak of about 1 GB of compiler memory, and at runtime in 3.5 ms
 (ReleaseFast).
 
 ## Tests
