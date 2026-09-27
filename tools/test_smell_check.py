@@ -39,6 +39,12 @@ class MagicNumber(unittest.TestCase):
         )
         self.assertEqual(rules(source), [])
 
+    def test_derived_from_a_constant(self):
+        derived = "pub const max_line_tokens = 64;\nconst max_value_tokens = max_line_tokens - 2;\n"
+        self.assertEqual(rules(derived), [])
+        runtime = "fn f(a: A) usize {\n    const capacity = a.symbols.len / 2;\n    return capacity;\n}\n"
+        self.assertEqual(rules(runtime), ["magic-number"])
+
     def test_shift_amounts(self):
         self.assertEqual(rules("fn f(x: u32) u32 {\n    return (x >> 8) + (x << 3);\n}\n"), [])
         self.assertEqual(rules("fn f(x: u32) u32 {\n    return 16 << 20;\n}\n"), ["magic-number"])
@@ -51,6 +57,8 @@ class MagicNumber(unittest.TestCase):
     def test_table_in_named_constant(self):
         table = "const precedence = .{\n    .{ .op = .add, .level = 5 },\n    .{ .op = .mul, .level = 6 },\n};\n"
         single = "const widths = [_]u8{ 3, 5, 7 };\n"
+        enum_array = "const ops = std.EnumArray(Tag, ?Op).initDefault(null, .{\n    .plus = .{ .level = 5 },\n});\n"
+        self.assertEqual(rules(enum_array), [])
         self.assertEqual(rules(table), [])
         self.assertEqual(rules(single), [])
         in_function = "fn level(op: Op) u8 {\n    return switch (op) {\n        .add => 5,\n        .mul => 6,\n    };\n}\n"

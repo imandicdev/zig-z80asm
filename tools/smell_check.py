@@ -83,7 +83,9 @@ NUMBER = re.compile(
 CONST_DECL = re.compile(r"^\s*(?:pub\s+)?const\s+\w+\s*(?::[^=]+)?=\s*(?P<init>[^;]*);")
 FIELD_DEFAULT = re.compile(r"^\s*\w+\s*:[^=]+=\s*(?P<init>[^,]*),\s*$")
 CONST_START = re.compile(r"^\s*(?:pub\s+)?const\s+\w+\s*(?::[^=]+)?=\s*(?P<init>.*)$")
-TABLE_INIT = re.compile(r"^(\.\{|\[[^\]]*\][\w.]*\{)|\.init\(\.\{")
+TABLE_INIT = re.compile(r"\.\{|\[[^\]]*\][\w.?]*\{")
+TOP_CONST = re.compile(r"^(?:pub\s+)?const\s+(\w+)\s*(?::[^=]+)?=")
+IDENT = re.compile(r"[A-Za-z_]\w*")
 # A call whose number arguments can be the base of a number: parseInt(T, s, 16).
 RADIX_CALL = re.compile(r"parse|radix|base|digit|format", re.I)
 SHIFTS = ("<<", ">>", "<<=", ">>=", "<<|", "<<|=")
@@ -192,13 +194,17 @@ def is_mask(literal: str, value, code: str, start: int, end: int) -> bool:
     return before.endswith(("&", "|", "^", "~", "&=", "|=", "^=")) or after.startswith(("&", "|", "^"))
 
 
-def is_named_constant(code: str) -> bool:
-    """A const declaration or a field default whose value is only numbers and operators."""
+def is_named_constant(code: str, top_consts: set[str]) -> bool:
+    """A const declaration or a field default whose value is a table, or numbers
+    and operators, possibly with constants declared at the top of the file."""
     m = CONST_DECL.match(code) or FIELD_DEFAULT.match(code)
     if not m:
         return False
     init = m["init"].strip()
-    return OPERATORS_ONLY.fullmatch(NUMBER.sub("", init)) is not None or TABLE_INIT.search(init) is not None
+    if TABLE_INIT.search(init):
+        return True
+    rest = NUMBER.sub("", init)
+    return OPERATORS_ONLY.fullmatch(IDENT.sub("", rest)) is not None and set(IDENT.findall(rest)) <= top_consts
 
 
 def explained(comment: str | None) -> bool:
@@ -207,6 +213,7 @@ def explained(comment: str | None) -> bool:
 
 def check_text(path: str, text: str) -> list[Finding]:
     lines = [split_line(t) for t in text.split("\n")]
+    top_consts = {m.group(1) for line in lines if (m := TOP_CONST.match(line.code))}
     in_opcode_file = Path(path).name == OPCODE_FILE
     findings: list[Finding] = []
 
@@ -262,7 +269,7 @@ def check_text(path: str, text: str) -> list[Finding]:
                 or is_shift_amount(code, start)
                 or is_radix(value, code, start, end)
                 or is_mask(literal, value, code, start, end)
-                or is_named_constant(code)
+                or is_named_constant(code, top_consts)
             ):
                 continue
             add(line_no, "magic-number",

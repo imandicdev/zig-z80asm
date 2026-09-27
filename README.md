@@ -86,7 +86,7 @@ z80asm [--origin ADDR] program.asm program.bin
 Requires Zig 0.16.0.
 
 ```
-zig fetch --save git+https://github.com/imandicdev/zig-z80asm#v0.1.0
+zig fetch --save git+https://github.com/imandicdev/zig-z80asm#v0.2.0
 ```
 
 and import the module in `build.zig`:
@@ -169,7 +169,7 @@ Four, all deliberate:
   gives 00. sjasmplus reads anything in column 0 as a label, so the same
   line defines a label NOP and emits nothing.
 
-## Not in 0.1
+## Not in 0.2
 
 - Macros, INCLUDE, INCBIN and conditional assembly.
 - sjasmplus local labels such as `.loop`: they are ordinary names, so a
@@ -193,8 +193,8 @@ Four, all deliberate:
   comptime compile error and as a runtime diagnostic (the two about
   comptime options only at comptime).
 
-The full Spectrum ROM, 17,699 lines, assembles at comptime in 50 s with a
-peak of about 1 GB of compiler memory, and at runtime in 3.5 ms
+The full Spectrum ROM, 17,699 lines, assembles at comptime in 48 s with a
+peak of about 1 GB of compiler memory, and at runtime in 3.4 ms
 (ReleaseFast).
 
 ## Tests
