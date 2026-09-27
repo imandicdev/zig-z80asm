@@ -760,12 +760,10 @@ fn parseDigits(digits: []const u8, base: u8) ?i32 {
     return if (v > std.math.maxInt(i32)) null else @intCast(v);
 }
 
-const Reg = enum { a, b, c, d, e, h, l, i, r, ixh, ixl, iyh, iyl, af, af_alt, bc, de, hl, sp, ix, iy };
+const Reg = enum { a, b, c, d, e, h, l, i, r, ixh, ixl, iyh, iyl, af, @"af'", bc, de, hl, sp, ix, iy };
 
 fn register(name: []const u8) ?Reg {
-    if (std.ascii.eqlIgnoreCase(name, "af'")) return .af_alt;
-    const r = NameTable(Reg).get(name) orelse return null;
-    return if (r == .af_alt) null else r; // only the tag name, not AF'
+    return NameTable(Reg).get(name);
 }
 
 /// Case-insensitive lookup of an enum by tag name through a hash table built at
@@ -1413,7 +1411,7 @@ fn restart(a: *Assembler, l: *Line) Error!void {
 
 fn exchange(a: *Assembler, l: *Line) Error!void {
     const dst, const src = try a.operandPair(l);
-    if (dst.isReg(.af) and src.isReg(.af_alt)) return a.emit(isa.exAf());
+    if (dst.isReg(.af) and src.isReg(.@"af'")) return a.emit(isa.exAf());
     if (dst.isReg(.de) and src.isReg(.hl)) return a.emit(isa.exDeHl());
     if (dst.isMemReg(.sp) and src == .reg) {
         if (src.reg == .hl) return a.emit(isa.exSpHl());
