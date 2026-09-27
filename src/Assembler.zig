@@ -36,8 +36,7 @@ pub const Symbol = struct {
     /// For sdas local labels such as 00101$: the label they belong to.
     scope: []const u8,
     hash: u32,
-    value: i32,
-    known: bool,
+    value: Value,
     /// Pass in which the symbol was last defined; detects duplicates.
     pass: u8,
 };
@@ -105,30 +104,38 @@ pub const Value = struct {
     known: bool = true,
 };
 
+/// Everything that starts over in each pass. Symbols and `pass` carry over.
+const PassState = struct {
+    diagnostic_count: usize = 0,
+    diagnostics_dropped: usize = 0,
+    pc: u32 = 0,
+    /// Address of the current statement, the value of `$`.
+    statement_pc: u32 = 0,
+    /// Set by END. The rest of a source is not read, and code that a Zig body
+    /// emits afterwards is an error.
+    ended: bool = false,
+    /// Uses of symbols without a value in this pass.
+    unresolved: u32 = 0,
+    /// Last symbol whose value differs from the previous pass.
+    changed: ?[]const u8 = null,
+    /// Last ordinary label; scope of the following sdas local labels.
+    scope: []const u8 = "",
+    /// Current sdas area when it is not _CODE. Areas are placed by the SDCC
+    /// linker, which z80asm does not replace, so only _CODE may hold anything.
+    other_area: ?[]const u8 = null,
+    empty: bool = true,
+    low: u32 = 0,
+    high: u32 = 0,
+    overlap_reported: bool = false,
+};
+
 options: Options,
 out: []u8,
 symbols: []Symbol,
 symbol_count: usize = 0,
 diagnostics: []Diagnostic,
-diagnostic_count: usize = 0,
-diagnostics_dropped: usize = 0,
 pass: u8 = 0,
-pc: u32 = 0,
-/// Address of the current statement, the value of `$`.
-statement_pc: u32 = 0,
 line_number: u32 = 0,
-/// Set by END. The rest of a source is not read, and code that a Zig body
-/// emits afterwards is an error.
-ended: bool = false,
-/// Uses of symbols without a value in this pass.
-unresolved: u32 = 0,
-/// Last symbol whose value differs from the previous pass.
-changed: ?[]const u8 = null,
-/// Last ordinary label; scope of the following sdas local labels.
-scope: []const u8 = "",
-/// Current sdas area when it is not _CODE. Areas are placed by the SDCC
-/// linker, which z80asm does not replace, so only _CODE may hold anything.
-other_area: ?[]const u8 = null,
 /// The line being assembled, as given by the caller. Tokens point into a
 /// temporary copy of it.
 original: []const u8 = "",
@@ -136,10 +143,7 @@ original: []const u8 = "",
 /// of run(): at comptime, changing an element of a [1024]usize field of this
 /// struct costs about 8 KB of compiler memory per write.
 written: []u8,
-empty: bool = true,
-low: u32 = 0,
-high: u32 = 0,
-overlap_reported: bool = false,
+state: PassState = .{},
 
 /// Runs `body(ctx, assembler)` once per pass until every symbol has a stable
 /// value. The body is executed several times, so it must not have side effects
@@ -161,21 +165,23 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
     for (a.symbols) |*s| s.name = "";
     while (true) {
         a.beginPass();
-        body(ctx, &a) catch {};
+        body(ctx, &a) catch |err| switch (err) {
+            error.AssemblyFailed => {}, // already in the diagnostics
+        };
         // A second pass is needed only for forward references, and later
         // passes only while some symbol still moves.
-        if (a.pass == 1 and a.unresolved == 0) break;
-        if (a.pass > 1 and a.changed == null) break;
+        if (a.pass == 1 and a.state.unresolved == 0) break;
+        if (a.pass > 1 and a.state.changed == null) break;
         if (a.pass == max_passes) {
-            a.report("phase error: label '{s}' did not settle", .{a.changed.?});
+            a.report("phase error: label '{s}' did not settle", .{a.state.changed.?});
             break;
         }
     }
     return .{
-        .origin = if (a.empty) options.origin else @intCast(a.low),
-        .bytes = a.out[0 .. a.high - a.low],
-        .diagnostics = a.diagnostics[0..a.diagnostic_count],
-        .diagnostics_dropped = a.diagnostics_dropped,
+        .origin = if (a.state.empty) options.origin else @intCast(a.state.low),
+        .bytes = a.out[0 .. a.state.high - a.state.low],
+        .diagnostics = a.diagnostics[0..a.state.diagnostic_count],
+        .diagnostics_dropped = a.state.diagnostics_dropped,
         .passes = a.pass,
     };
 }
@@ -189,14 +195,16 @@ fn assembleLines(source: []const u8, a: *Assembler) Error!void {
     var reader: LineReader = .{ .source = source };
     var start: usize = 0;
     var number: u32 = 0;
-    while (start <= source.len and !a.ended) {
-        var end: usize = undefined;
-        const copy = reader.line(start, &end);
+    while (start <= source.len and !a.state.ended) {
+        const next = reader.line(start);
+        const text = source[start..next.end];
         number += 1;
         a.line_number = number;
-        a.assembleLine(source[start..end], copy orelse source[start..end]) catch {};
-        if (poison_copies) if (copy) |c| @memset(c, 0xAA);
-        start = end + 1;
+        a.assembleLine(text, next.copy orelse text) catch |err| switch (err) {
+            error.AssemblyFailed => {}, // already in the diagnostics
+        };
+        if (poison_copies) if (next.copy) |c| @memset(c, 0xAA);
+        start = next.end + 1;
     }
     a.line_number = 0;
 }
@@ -212,21 +220,19 @@ const LineReader = struct {
     buf_start: usize = 0,
     buf_len: usize = 0,
 
-    /// The line that starts at `start`, as a slice of the buffer, or null when
-    /// it is longer than the buffer. `end` gets the offset of its '\n' or the
-    /// end of the source.
-    fn line(r: *LineReader, start: usize, end: *usize) ?[]u8 {
+    /// The line that starts at `start`: `copy` is it as a slice of the buffer,
+    /// or null when it is longer than the buffer, and `end` is the offset of its
+    /// '\n' or the end of the source.
+    fn line(r: *LineReader, start: usize) struct { copy: ?[]u8, end: usize } {
         while (true) {
             if (start >= r.buf_start and start <= r.buf_start + r.buf_len) {
                 const from = start - r.buf_start;
                 const i = from + lineEnd(r.buf[from..r.buf_len]);
                 if (i < r.buf_len or r.buf_start + r.buf_len == r.source.len) {
-                    end.* = r.buf_start + i;
-                    return r.buf[from..i];
+                    return .{ .copy = r.buf[from..i], .end = r.buf_start + i };
                 }
                 if (from == 0 and r.buf_len == r.buf.len) {
-                    end.* = start + lineEnd(r.source[start..]);
-                    return null;
+                    return .{ .copy = null, .end = start + lineEnd(r.source[start..]) };
                 }
             }
             r.buf_start = start;
@@ -251,31 +257,19 @@ fn lineEnd(text: []const u8) usize {
 
 fn beginPass(a: *Assembler) void {
     a.pass += 1;
-    a.pc = a.options.origin;
-    a.statement_pc = a.pc;
-    a.ended = false;
-    a.unresolved = 0;
-    a.changed = null;
-    a.scope = "";
-    a.other_area = null;
-    a.diagnostic_count = 0;
-    a.diagnostics_dropped = 0;
+    a.state = .{ .pc = a.options.origin, .statement_pc = a.options.origin };
     @memset(a.written, 0);
-    a.empty = true;
-    a.low = 0;
-    a.high = 0;
-    a.overlap_reported = false;
 }
 
 /// Records a diagnostic and continues. Used for value errors, so that a wrong
 /// value never changes the size of the output.
 fn report(a: *Assembler, comptime fmt: []const u8, args: anytype) void {
-    if (a.diagnostic_count == a.diagnostics.len) {
-        a.diagnostics_dropped += 1;
+    if (a.state.diagnostic_count == a.diagnostics.len) {
+        a.state.diagnostics_dropped += 1;
         return;
     }
-    const d = &a.diagnostics[a.diagnostic_count];
-    a.diagnostic_count += 1;
+    const d = &a.diagnostics[a.state.diagnostic_count];
+    a.state.diagnostic_count += 1;
     d.line = a.line_number;
     const text = std.fmt.bufPrint(&d.buf, fmt, args) catch &d.buf;
     d.len = @intCast(text.len);
@@ -289,18 +283,18 @@ fn fail(a: *Assembler, comptime fmt: []const u8, args: anytype) Error {
 
 /// Address of the next byte.
 pub fn here(a: *const Assembler) u16 {
-    return @truncate(a.pc);
+    return @truncate(a.state.pc);
 }
 
 pub fn org(a: *Assembler, address: u16) void {
-    a.pc = address;
+    a.state.pc = address;
 }
 
 /// `name` is kept, not copied; see `run`.
 pub fn label(a: *Assembler, name: []const u8) Error!void {
     try a.checkArea();
-    try a.define(name, .{ .value = @intCast(a.pc) });
-    if (!isLocal(name)) a.scope = name;
+    try a.define(name, .{ .value = @intCast(a.state.pc) });
+    if (!isLocal(name)) a.state.scope = name;
 }
 
 /// `name` is kept, not copied; see `run`.
@@ -318,7 +312,7 @@ pub fn bytes(a: *Assembler, data: []const u8) Error!void {
 
 /// Evaluates an expression such as "msg+1" or "$-start".
 pub fn eval(a: *Assembler, text: []const u8) Error!Value {
-    a.statement_pc = a.pc;
+    a.state.statement_pc = a.state.pc;
     var l = try a.tokenize(text);
     try a.expectFits(&l);
     const v = try a.expression(&l);
@@ -326,12 +320,13 @@ pub fn eval(a: *Assembler, text: []const u8) Error!Value {
     return v;
 }
 
-/// An expression as an 8-bit operand.
+/// An expression as an 8-bit operand, -128..255. A value out of range is
+/// reported and truncated, not returned as an error (see `report`).
 pub fn byte(a: *Assembler, text: []const u8) Error!u8 {
     return a.byteOf(try a.eval(text));
 }
 
-/// An expression as a 16-bit operand.
+/// An expression as a 16-bit operand, -32768..65535; out of range as in `byte`.
 pub fn word(a: *Assembler, text: []const u8) Error!u16 {
     return a.wordOf(try a.eval(text));
 }
@@ -347,42 +342,42 @@ pub fn displacement(a: *Assembler, text: []const u8) Error!i8 {
 }
 
 fn checkArea(a: *Assembler) Error!void {
-    if (a.other_area) |area| return a.fail("only the _CODE area is supported, not '{s}'", .{area});
+    if (a.state.other_area) |area| return a.fail("only the _CODE area is supported, not '{s}'", .{area});
 }
 
 fn store(a: *Assembler, b: u8) Error!void {
-    if (a.ended) return a.fail("code after END", .{});
+    if (a.state.ended) return a.fail("code after END", .{});
     try a.checkArea();
-    if (a.pc > 0xFFFF) return a.fail("address beyond 0xFFFF", .{});
-    const addr = a.pc;
+    if (a.state.pc > 0xFFFF) return a.fail("address beyond 0xFFFF", .{});
+    const addr = a.state.pc;
     const bit = @as(u8, 1) << @as(u3, @truncate(addr));
     if (a.written[addr >> 3] & bit != 0) {
-        if (!a.overlap_reported) a.report("overlap at 0x{X:0>4}: address written twice", .{addr});
-        a.overlap_reported = true;
+        if (!a.state.overlap_reported) a.report("overlap at 0x{X:0>4}: address written twice", .{addr});
+        a.state.overlap_reported = true;
     }
     a.written[addr >> 3] |= bit;
 
-    if (a.empty) {
-        a.empty = false;
-        a.low = addr;
-        a.high = addr;
+    if (a.state.empty) {
+        a.state.empty = false;
+        a.state.low = addr;
+        a.state.high = addr;
     }
-    if (addr < a.low) {
+    if (addr < a.state.low) {
         // An ORG went below everything written so far: move the image up.
-        const shift = a.low - addr;
-        const used = a.high - a.low;
+        const shift = a.state.low - addr;
+        const used = a.state.high - a.state.low;
         if (used + shift > a.out.len) return a.fail("output buffer too small ({d} bytes)", .{a.out.len});
         std.mem.copyBackwards(u8, a.out[shift..][0..used], a.out[0..used]);
         @memset(a.out[0..shift], 0);
-        a.low = addr;
+        a.state.low = addr;
     }
-    if (addr >= a.high) {
-        if (addr + 1 - a.low > a.out.len) return a.fail("output buffer too small ({d} bytes)", .{a.out.len});
-        @memset(a.out[a.high - a.low .. addr - a.low], 0);
-        a.high = addr + 1;
+    if (addr >= a.state.high) {
+        if (addr + 1 - a.state.low > a.out.len) return a.fail("output buffer too small ({d} bytes)", .{a.out.len});
+        @memset(a.out[a.state.high - a.state.low .. addr - a.state.low], 0);
+        a.state.high = addr + 1;
     }
-    a.out[addr - a.low] = b;
-    a.pc += 1;
+    a.out[addr - a.state.low] = b;
+    a.state.pc += 1;
 }
 
 /// sdas reusable labels: digits followed by '$', local to the region between
@@ -391,12 +386,12 @@ fn isLocal(name: []const u8) bool {
     return name.len > 1 and name[name.len - 1] == '$' and std.ascii.isDigit(name[0]);
 }
 
-/// FNV-1a over the name and, for local labels, the scope.
+/// Hash of the name and, for local labels, the scope.
 fn hashName(name: []const u8, scope: []const u8) u32 {
-    var h: u32 = 0x811C9DC5;
-    for (name) |c| h = (h ^ c) *% 0x01000193;
-    for (scope) |c| h = (h ^ c) *% 0x01000193;
-    return h;
+    var h: std.hash.Fnv1a_32 = .init();
+    h.update(name);
+    h.update(scope);
+    return h.final();
 }
 
 /// The slot holding `name`, or the free slot where it belongs. The table is
@@ -411,47 +406,48 @@ fn slot(a: *Assembler, name: []const u8, scope: []const u8, hash: u32) *Symbol {
     }
 }
 
+/// The scope `name` is looked up in: the current one for local labels.
+fn scopeOf(a: *const Assembler, name: []const u8) []const u8 {
+    return if (isLocal(name)) a.state.scope else "";
+}
+
 fn find(a: *Assembler, name: []const u8) ?*Symbol {
     if (a.symbol_count == 0) return null;
-    const scope = if (isLocal(name)) a.scope else "";
+    const scope = a.scopeOf(name);
     const s = a.slot(name, scope, hashName(name, scope));
     return if (s.name.len == 0) null else s;
 }
 
 fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
-    if (a.find(name)) |s| {
+    const capacity = a.symbols.len / 2;
+    // Also keeps `slot` away from a table without slots.
+    if (capacity == 0) return a.fail("too many symbols (capacity 0)", .{});
+    const scope = a.scopeOf(name);
+    const hash = hashName(name, scope);
+    const s = a.slot(name, scope, hash);
+    if (s.name.len != 0) {
         if (s.pass == a.pass) return a.fail("duplicate symbol '{s}'", .{name});
-        if (s.known != v.known or s.value != v.value) a.changed = s.name;
-        s.value = v.value;
-        s.known = v.known;
+        if (!std.meta.eql(s.value, v)) a.state.changed = s.name;
+        s.value = v;
         s.pass = a.pass;
         return;
     }
-    if (a.symbol_count >= a.symbols.len / 2) return a.fail("too many symbols (capacity {d})", .{a.symbols.len / 2});
-    const scope = if (isLocal(name)) a.scope else "";
-    const hash = hashName(name, scope);
-    a.slot(name, scope, hash).* = .{
-        .name = name,
-        .scope = scope,
-        .hash = hash,
-        .value = v.value,
-        .known = v.known,
-        .pass = a.pass,
-    };
+    if (a.symbol_count == capacity) return a.fail("too many symbols (capacity {d})", .{capacity});
+    s.* = .{ .name = name, .scope = scope, .hash = hash, .value = v, .pass = a.pass };
     a.symbol_count += 1;
-    if (a.pass > 1) a.changed = name;
+    if (a.pass > 1) a.state.changed = name;
 }
 
 fn symbolValue(a: *Assembler, name: []const u8) Value {
     if (a.find(name)) |s| {
-        if (!s.known) {
-            a.unresolved += 1;
+        if (!s.value.known) {
+            a.state.unresolved += 1;
             // Defined, but only in terms of itself or of undefined symbols.
             if (a.pass > 1) a.report("symbol '{s}' has no value", .{name});
         }
-        return .{ .value = s.value, .known = s.known };
+        return s.value;
     }
-    a.unresolved += 1;
+    a.state.unresolved += 1;
     // In pass 1 this may be a label further down; only later passes know.
     if (a.pass > 1) a.report("undefined symbol '{s}'", .{name});
     return .{ .value = 0, .known = false };
@@ -460,18 +456,30 @@ fn symbolValue(a: *Assembler, name: []const u8) Value {
 // Value checks are skipped for unknown values and only record a diagnostic,
 // so they are reported in the pass where everything is known.
 
+fn outside(v: Value, min: i32, max: i32) bool {
+    return v.known and (v.value < min or v.value > max);
+}
+
+/// Out of range: reported, and the low 8 bits are used, as in wordOf and
+/// bitOf. displacementOf differs on purpose. Both keep the instruction size,
+/// and the tool and comptimeAssemble never write the bytes of a result with
+/// diagnostics.
 fn byteOf(a: *Assembler, v: Value) u8 {
-    if (v.known and (v.value < -128 or v.value > 255)) a.report("value {d} does not fit in 8 bits", .{v.value});
+    if (outside(v, -128, 255)) a.report("value {d} does not fit in 8 bits", .{v.value});
     return @truncate(@as(u32, @bitCast(v.value)));
 }
 
 fn wordOf(a: *Assembler, v: Value) u16 {
-    if (v.known and (v.value < -32768 or v.value > 65535)) a.report("value {d} does not fit in 16 bits", .{v.value});
+    if (outside(v, -32768, 65535)) a.report("value {d} does not fit in 16 bits", .{v.value});
     return @truncate(@as(u32, @bitCast(v.value)));
 }
 
+/// Out of range: reported, and 0 is used instead of the low 8 bits, on
+/// purpose, as in relativeOf, restart and interruptMode. The image that
+/// `assemble` returns with the diagnostic then holds (IX+0), not a wrapped
+/// displacement that looks valid, such as (IX-56) for (IX+200).
 fn displacementOf(a: *Assembler, v: Value) i8 {
-    if (v.known and (v.value < -128 or v.value > 127)) {
+    if (outside(v, -128, 127)) {
         a.report("index displacement {d} out of range -128..127", .{v.value});
         return 0;
     }
@@ -481,7 +489,7 @@ fn displacementOf(a: *Assembler, v: Value) i8 {
 /// Offset of a JR/DJNZ target from the end of the 2-byte instruction.
 fn relativeOf(a: *Assembler, target: Value) i8 {
     if (!target.known) return 0;
-    const offset = @as(i64, target.value) - (a.statement_pc + 2);
+    const offset = @as(i64, target.value) - (a.state.statement_pc + 2);
     if (offset < -128 or offset > 127) {
         a.report("relative jump out of range ({d} bytes)", .{offset});
         return 0;
@@ -490,7 +498,7 @@ fn relativeOf(a: *Assembler, target: Value) i8 {
 }
 
 fn bitOf(a: *Assembler, v: Value) u3 {
-    if (v.known and (v.value < 0 or v.value > 7)) a.report("bit number {d} out of range 0..7", .{v.value});
+    if (outside(v, 0, 7)) a.report("bit number {d} out of range 0..7", .{v.value});
     return @truncate(@as(u32, @bitCast(v.value)));
 }
 
@@ -526,6 +534,11 @@ const Line = struct {
         if (l.peek().tag != tag) return false;
         _ = l.take();
         return true;
+    }
+
+    /// Leaves only the `.end` token, for directives whose operands are ignored.
+    fn skipRest(l: *Line) void {
+        l.pos = l.len - 1;
     }
 
     fn commaAhead(l: *const Line) bool {
@@ -685,12 +698,12 @@ fn primary(a: *Assembler, l: *Line) Error!Value {
     switch (t.tag) {
         .number => return .{ .value = parseNumber(t.text) orelse return a.fail("invalid number '{s}'", .{t.text}) },
         .string => {
-            var it: StringBytes = .init(t.text);
-            const c = try a.stringByte(&it) orelse return a.fail("string {s} used as a number", .{t.text});
-            if (try a.stringByte(&it) != null) return a.fail("string {s} used as a number", .{t.text});
+            var it: StringIterator = .init(t.text);
+            const c = try it.next(a) orelse return a.fail("string {s} used as a number", .{t.text});
+            if (try it.next(a) != null) return a.fail("string {s} used as a number", .{t.text});
             return .{ .value = c };
         },
-        .dollar => return .{ .value = @intCast(a.statement_pc) },
+        .dollar => return .{ .value = @intCast(a.state.statement_pc) },
         // Where an operand is expected, '%' starts a binary number ("DB %0101").
         .percent => {
             const digits = l.peek();
@@ -751,9 +764,8 @@ const Reg = enum { a, b, c, d, e, h, l, i, r, ixh, ixl, iyh, iyl, af, af_alt, bc
 
 fn register(name: []const u8) ?Reg {
     if (std.ascii.eqlIgnoreCase(name, "af'")) return .af_alt;
-    // The length check also keeps the tag name "af_alt" from matching.
-    if (name.len > 3) return null;
-    return NameTable(Reg).get(name);
+    const r = NameTable(Reg).get(name) orelse return null;
+    return if (r == .af_alt) null else r; // only the tag name, not AF'
 }
 
 /// Case-insensitive lookup of an enum by tag name through a hash table built at
@@ -761,7 +773,12 @@ fn register(name: []const u8) ?Reg {
 /// assembler runs at comptime.
 fn NameTable(comptime E: type) type {
     const fields = @typeInfo(E).@"enum".fields;
-    const size = std.math.ceilPowerOfTwo(usize, 2 * fields.len) catch unreachable;
+    const size = std.math.ceilPowerOfTwoAssert(usize, 2 * fields.len);
+    const max_len = blk: {
+        var m: usize = 0;
+        for (fields) |f| m = @max(m, f.name.len);
+        break :blk m;
+    };
     return struct {
         const slots: [size]?E = blk: {
             @setEvalBranchQuota(100_000);
@@ -775,6 +792,7 @@ fn NameTable(comptime E: type) type {
         };
 
         fn get(name: []const u8) ?E {
+            if (name.len > max_len) return null;
             var i = hashLower(name) & (size - 1);
             while (slots[i]) |e| : (i = (i + 1) & (size - 1)) {
                 if (std.ascii.eqlIgnoreCase(@tagName(e), name)) return e;
@@ -842,6 +860,14 @@ const Operand = union(enum) {
     /// (nn)
     mem: Value,
     imm: Value,
+
+    fn isReg(op: Operand, r: Reg) bool {
+        return op == .reg and op.reg == r;
+    }
+
+    fn isMemReg(op: Operand, r: Reg) bool {
+        return op == .mem_reg and op.mem_reg == r;
+    }
 
     /// (HL) as isa.R8.hl_mem, or a plain register.
     fn r8(op: Operand) ?isa.R8 {
@@ -927,15 +953,15 @@ fn operandPair(a: *Assembler, l: *Line) Error![2]Operand {
     return .{ first, try a.operand(l) };
 }
 
-/// Condition code at the start of a JP/JR/CALL/RET operand list.
-fn condition(l: *Line, followed_by_comma: bool) ?isa.Cc {
+/// Condition code at the start of a JP/JR/CALL/RET operand list: the only
+/// operand of RET, or the first one, before a comma, of the others.
+fn condition(l: *Line, comptime position: enum { only, first }) ?isa.Cc {
     const t = l.peek();
     if (t.tag != .identifier) return null;
-    if (followed_by_comma and l.peekAt(1).tag != .comma) return null;
-    if (t.text.len > 2) return null;
+    if (position == .first and l.peekAt(1).tag != .comma) return null;
     const cc = NameTable(isa.Cc).get(t.text) orelse return null;
     _ = l.take();
-    if (followed_by_comma) _ = l.take();
+    if (position == .first) _ = l.take();
     return cc;
 }
 
@@ -1035,7 +1061,6 @@ const Keyword = enum {
 };
 
 fn keyword(name: []const u8) ?Keyword {
-    if (name.len > 8) return null;
     return NameTable(Keyword).get(name);
 }
 
@@ -1053,7 +1078,7 @@ pub fn line(a: *Assembler, text: []const u8) Error!void {
 /// `copy` holds the same bytes as `original` and is what gets parsed; names
 /// that outlive the line are taken from `original` (see `kept`).
 fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!void {
-    a.statement_pc = a.pc;
+    a.state.statement_pc = a.state.pc;
     a.original = original;
     var l = try a.tokenize(copy);
 
@@ -1106,98 +1131,79 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
         else => try a.expectFits(l),
     }
 
-    const fixed: ?isa.Encoding = switch (kw) {
-        .nop => isa.nop(),
-        .halt => isa.halt(),
-        .ei => isa.ei(),
-        .di => isa.di(),
-        .exx => isa.exx(),
-        .rlca => isa.rlca(),
-        .rrca => isa.rrca(),
-        .rla => isa.rla(),
-        .rra => isa.rra(),
-        .daa => isa.daa(),
-        .cpl => isa.cpl(),
-        .scf => isa.scf(),
-        .ccf => isa.ccf(),
-        .neg => isa.neg(),
-        .retn => isa.retn(),
-        .reti => isa.reti(),
-        .rrd => isa.rrd(),
-        .rld => isa.rld(),
-        .ldi => isa.ldi(),
-        .ldd => isa.ldd(),
-        .ldir => isa.ldir(),
-        .lddr => isa.lddr(),
-        .cpi => isa.cpi(),
-        .cpd => isa.cpd(),
-        .cpir => isa.cpir(),
-        .cpdr => isa.cpdr(),
-        .ini => isa.ini(),
-        .ind => isa.ind(),
-        .inir => isa.inir(),
-        .indr => isa.indr(),
-        .outi => isa.outi(),
-        .outd => isa.outd(),
-        .otir => isa.otir(),
-        .otdr => isa.otdr(),
-        else => null,
-    };
-    if (fixed) |e| return a.emit(e);
-
     return switch (kw) {
+        .db, .defb, .defm, .dm, .@".db", .@".byte", .dw, .defw, .@".dw", .@".word" => unreachable, // above
+        inline .nop,
+        .halt,
+        .ei,
+        .di,
+        .exx,
+        .rlca,
+        .rrca,
+        .rla,
+        .rra,
+        .daa,
+        .cpl,
+        .scf,
+        .ccf,
+        .neg,
+        .retn,
+        .reti,
+        .rrd,
+        .rld,
+        .ldi,
+        .ldd,
+        .ldir,
+        .lddr,
+        .cpi,
+        .cpd,
+        .cpir,
+        .cpdr,
+        .ini,
+        .ind,
+        .inir,
+        .indr,
+        .outi,
+        .outd,
+        .otir,
+        .otdr,
+        => |k| a.emit(@field(isa, @tagName(k))()),
         .ld => a.emit(try a.encodeLd(try a.operandPair(l))),
-        .add => a.alu(l, .add),
-        .adc => a.alu(l, .adc),
-        .sub => a.alu(l, .sub),
-        .sbc => a.alu(l, .sbc),
-        .@"and" => a.alu(l, .@"and"),
-        .xor => a.alu(l, .xor),
-        .@"or" => a.alu(l, .@"or"),
-        .cp => a.alu(l, .cp),
-        .inc => a.incDec(l, true),
-        .dec => a.incDec(l, false),
-        .push => a.pushPop(l, true),
-        .pop => a.pushPop(l, false),
+        inline .add, .adc, .sub, .sbc, .@"and", .xor, .@"or", .cp => |k| a.alu(l, @field(isa.Alu, @tagName(k))),
+        .inc => a.incDec(l, .inc),
+        .dec => a.incDec(l, .dec),
+        .push => a.pushPop(l, .push),
+        .pop => a.pushPop(l, .pop),
         .jp => a.jump(l),
         .call => a.callStatement(l),
-        .jr => a.relativeJump(l, false),
-        .djnz => a.relativeJump(l, true),
-        .ret => if (condition(l, false)) |cc| a.emit(isa.retCc(cc)) else a.emit(isa.ret()),
+        .jr => a.relativeJump(l, .jr),
+        .djnz => a.relativeJump(l, .djnz),
+        .ret => if (condition(l, .only)) |cc| a.emit(isa.retCc(cc)) else a.emit(isa.ret()),
         .rst => a.restart(l),
         .ex => a.exchange(l),
         .in => a.input(l),
         .out => a.output(l),
         .im => a.interruptMode(l),
-        .bit => a.bitStatement(l, .bit),
-        .set => a.bitStatement(l, .set),
-        .res => a.bitStatement(l, .res),
-        .rlc => a.rotate(l, .rlc),
-        .rrc => a.rotate(l, .rrc),
-        .rl => a.rotate(l, .rl),
-        .rr => a.rotate(l, .rr),
-        .sla => a.rotate(l, .sla),
-        .sra => a.rotate(l, .sra),
-        .sll, .sli => a.rotate(l, .sll),
-        .srl => a.rotate(l, .srl),
+        inline .bit, .set, .res => |k| a.bitStatement(l, @field(BitOp, @tagName(k))),
+        inline .rlc, .rrc, .rl, .rr, .sla, .sra, .sll, .srl => |k| a.rotate(l, @field(isa.Rot, @tagName(k))),
+        .sli => a.rotate(l, .sll),
         .org, .@".org" => a.org(a.wordOf(try a.expression(l))),
-        .@".ascii" => a.asciiString(l, false),
-        .@".asciz" => a.asciiString(l, true),
+        .@".ascii" => a.asciiString(l, .ascii),
+        .@".asciz" => a.asciiString(l, .asciz),
         .ds, .defs, .@".ds" => a.reserve(l),
         .end => {
             // "END start" names the entry point, which a flat image does not need.
             if (!l.atEnd()) _ = try a.expression(l);
-            a.ended = true;
+            a.state.ended = true;
         },
         .equ => a.fail("EQU needs a label", .{}),
         .@".area" => {
             const name = l.take();
             if (name.tag != .identifier) return a.fail("expected an area name, found '{s}'", .{name.text});
-            a.other_area = if (std.mem.eql(u8, name.text, "_CODE")) null else a.kept(name);
-            l.pos = l.len - 1; // "(ABS)" and other attributes
+            a.state.other_area = if (std.mem.eql(u8, name.text, "_CODE")) null else a.kept(name);
+            l.skipRest(); // "(ABS)" and other attributes
         },
-        .@".globl", .@".module", .@".optsdcc" => l.pos = l.len - 1,
-        else => unreachable,
+        .@".globl", .@".module", .@".optsdcc" => l.skipRest(),
     };
 }
 
@@ -1242,8 +1248,8 @@ fn encodeLd(a: *Assembler, ops: [2]Operand) Error!isa.Encoding {
                 }
                 return a.invalid();
             }
-            if (d == .i and src == .reg and src.reg == .a) return isa.ldIA();
-            if (d == .r and src == .reg and src.reg == .a) return isa.ldRA();
+            if (d == .i and src.isReg(.a)) return isa.ldIA();
+            if (d == .r and src.isReg(.a)) return isa.ldRA();
             if (pair(d)) |rr| switch (src) {
                 .imm => |v| return isa.ldRrNn(rr, a.wordOf(v)),
                 .mem => |v| return isa.ldRrMem(rr, a.wordOf(v)),
@@ -1264,7 +1270,7 @@ fn encodeLd(a: *Assembler, ops: [2]Operand) Error!isa.Encoding {
                 if (src.r8()) |s| if (s != .hl_mem) return isa.ldRR(.hl_mem, s);
                 if (src == .imm) return isa.ldRN(.hl_mem, a.byteOf(src.imm));
             }
-            if (src == .reg and src.reg == .a) {
+            if (src.isReg(.a)) {
                 if (d == .bc) return isa.ldBcA();
                 if (d == .de) return isa.ldDeA();
             }
@@ -1298,12 +1304,11 @@ fn alu(a: *Assembler, l: *Line, op: isa.Alu) Error!void {
         switch (src.reg) {
             .a => src = rhs,
             .hl => {
-                const rr = if (rhs == .reg) pair(rhs.reg) else null;
-                if (rr == null) return a.invalid();
+                const rr = (if (rhs == .reg) pair(rhs.reg) else null) orelse return a.invalid();
                 return a.emit(switch (op) {
-                    .add => isa.addHlRr(rr.?),
-                    .adc => isa.adcHlRr(rr.?),
-                    .sbc => isa.sbcHlRr(rr.?),
+                    .add => isa.addHlRr(rr),
+                    .adc => isa.adcHlRr(rr),
+                    .sbc => isa.sbcHlRr(rr),
                     else => return a.invalid(),
                 });
             },
@@ -1331,34 +1336,35 @@ fn alu(a: *Assembler, l: *Line, op: isa.Alu) Error!void {
     return a.invalid();
 }
 
-fn incDec(a: *Assembler, l: *Line, inc: bool) Error!void {
-    const op = try a.operand(l);
-    if (op.r8()) |r| return a.emit(if (inc) isa.incR(r) else isa.decR(r));
-    if (op.indexed()) |m| return a.emit(if (inc) isa.incIdxD(m.idx, m.d) else isa.decIdxD(m.idx, m.d));
-    if (op == .reg) {
-        if (pair(op.reg)) |rr| return a.emit(if (inc) isa.incRr(rr) else isa.decRr(rr));
-        if (index(op.reg)) |idx| return a.emit(if (inc) isa.incIdx(idx) else isa.decIdx(idx));
-        if (half(op.reg)) |h| return a.emit(isa.indexHalf(h.idx, if (inc) isa.incR(h.reg) else isa.decR(h.reg)));
+fn incDec(a: *Assembler, l: *Line, op: enum { inc, dec }) Error!void {
+    const target = try a.operand(l);
+    const inc = op == .inc;
+    if (target.r8()) |r| return a.emit(if (inc) isa.incR(r) else isa.decR(r));
+    if (target.indexed()) |m| return a.emit(if (inc) isa.incIdxD(m.idx, m.d) else isa.decIdxD(m.idx, m.d));
+    if (target == .reg) {
+        if (pair(target.reg)) |rr| return a.emit(if (inc) isa.incRr(rr) else isa.decRr(rr));
+        if (index(target.reg)) |idx| return a.emit(if (inc) isa.incIdx(idx) else isa.decIdx(idx));
+        if (half(target.reg)) |h| return a.emit(isa.indexHalf(h.idx, if (inc) isa.incR(h.reg) else isa.decR(h.reg)));
     }
     return a.invalid();
 }
 
-fn pushPop(a: *Assembler, l: *Line, push: bool) Error!void {
-    const op = try a.operand(l);
-    if (op != .reg) return a.invalid();
-    if (index(op.reg)) |idx| return a.emit(if (push) isa.pushIdx(idx) else isa.popIdx(idx));
-    const rr: isa.R16af = switch (op.reg) {
+fn pushPop(a: *Assembler, l: *Line, op: enum { push, pop }) Error!void {
+    const target = try a.operand(l);
+    if (target != .reg) return a.invalid();
+    if (index(target.reg)) |idx| return a.emit(if (op == .push) isa.pushIdx(idx) else isa.popIdx(idx));
+    const rr: isa.R16af = switch (target.reg) {
         .bc => .bc,
         .de => .de,
         .hl => .hl,
         .af => .af,
         else => return a.invalid(),
     };
-    return a.emit(if (push) isa.push(rr) else isa.pop(rr));
+    return a.emit(if (op == .push) isa.push(rr) else isa.pop(rr));
 }
 
 fn jump(a: *Assembler, l: *Line) Error!void {
-    if (condition(l, true)) |cc| {
+    if (condition(l, .first)) |cc| {
         const target = try a.operand(l);
         if (target != .imm) return a.invalid();
         return a.emit(isa.jpCc(cc, a.wordOf(target.imm)));
@@ -1376,15 +1382,15 @@ fn jump(a: *Assembler, l: *Line) Error!void {
 }
 
 fn callStatement(a: *Assembler, l: *Line) Error!void {
-    const cc = condition(l, true);
+    const cc = condition(l, .first);
     const target = try a.operand(l);
     if (target != .imm) return a.invalid();
     const nn = a.wordOf(target.imm);
     return a.emit(if (cc) |c| isa.callCc(c, nn) else isa.call(nn));
 }
 
-fn relativeJump(a: *Assembler, l: *Line, djnz: bool) Error!void {
-    const cc = if (djnz) null else condition(l, true);
+fn relativeJump(a: *Assembler, l: *Line, op: enum { jr, djnz }) Error!void {
+    const cc = if (op == .djnz) null else condition(l, .first);
     if (cc) |c| switch (c) {
         .nz, .z, .nc, .c => {},
         else => return a.fail("JR supports only NZ, Z, NC and C", .{}),
@@ -1392,13 +1398,13 @@ fn relativeJump(a: *Assembler, l: *Line, djnz: bool) Error!void {
     const target = try a.operand(l);
     if (target != .imm) return a.invalid();
     const e = a.relativeOf(target.imm);
-    if (djnz) return a.emit(isa.djnz(e));
+    if (op == .djnz) return a.emit(isa.djnz(e));
     return a.emit(if (cc) |c| isa.jrCc(c, e) else isa.jr(e));
 }
 
 fn restart(a: *Assembler, l: *Line) Error!void {
     const v = try a.expression(l);
-    if (v.known and (v.value < 0 or v.value > 0x38 or @rem(v.value, 8) != 0)) {
+    if (outside(v, 0, 0x38) or (v.known and @rem(v.value, 8) != 0)) {
         a.report("RST target must be one of 0x00, 0x08, ..., 0x38", .{});
         return a.emit(isa.rst(0));
     }
@@ -1407,11 +1413,9 @@ fn restart(a: *Assembler, l: *Line) Error!void {
 
 fn exchange(a: *Assembler, l: *Line) Error!void {
     const dst, const src = try a.operandPair(l);
-    if (dst == .reg and src == .reg) {
-        if (dst.reg == .af and src.reg == .af_alt) return a.emit(isa.exAf());
-        if (dst.reg == .de and src.reg == .hl) return a.emit(isa.exDeHl());
-    }
-    if (dst == .mem_reg and dst.mem_reg == .sp and src == .reg) {
+    if (dst.isReg(.af) and src.isReg(.af_alt)) return a.emit(isa.exAf());
+    if (dst.isReg(.de) and src.isReg(.hl)) return a.emit(isa.exDeHl());
+    if (dst.isMemReg(.sp) and src == .reg) {
         if (src.reg == .hl) return a.emit(isa.exSpHl());
         if (index(src.reg)) |idx| return a.emit(isa.exSpIdx(idx));
     }
@@ -1427,21 +1431,21 @@ fn input(a: *Assembler, l: *Line) Error!void {
     }
     const first = try a.operand(l);
     if (!l.eat(.comma)) {
-        if (first == .mem_reg and first.mem_reg == .c) return a.emit(isa.inFC());
+        if (first.isMemReg(.c)) return a.emit(isa.inFC());
         return a.invalid();
     }
     const src = try a.operand(l);
     if (first != .reg) return a.invalid();
     const r = plain(first.reg) orelse return a.invalid();
-    if (src == .mem_reg and src.mem_reg == .c) return a.emit(isa.inRC(r));
+    if (src.isMemReg(.c)) return a.emit(isa.inRC(r));
     if (src == .mem and r == .a) return a.emit(isa.inAN(a.byteOf(src.mem)));
     return a.invalid();
 }
 
 fn output(a: *Assembler, l: *Line) Error!void {
     const dst, const src = try a.operandPair(l);
-    if (dst == .mem and src == .reg and src.reg == .a) return a.emit(isa.outNA(a.byteOf(dst.mem)));
-    if (dst == .mem_reg and dst.mem_reg == .c) {
+    if (dst == .mem and src.isReg(.a)) return a.emit(isa.outNA(a.byteOf(dst.mem)));
+    if (dst.isMemReg(.c)) {
         if (src == .reg) if (plain(src.reg)) |r| return a.emit(isa.outCR(r));
         if (src == .imm and src.imm.value == 0) return a.emit(isa.outC0());
     }
@@ -1450,7 +1454,7 @@ fn output(a: *Assembler, l: *Line) Error!void {
 
 fn interruptMode(a: *Assembler, l: *Line) Error!void {
     const v = try a.expression(l);
-    if (v.known and (v.value < 0 or v.value > 2)) {
+    if (outside(v, 0, 2)) {
         a.report("interrupt mode must be 0, 1 or 2", .{});
         return a.emit(isa.im(0));
     }
@@ -1490,7 +1494,7 @@ fn dataBytes(a: *Assembler, l: *Line) Error!void {
         const next = l.peekAt(1).tag;
         if (t.tag == .string and (next == .comma or next == .end)) {
             _ = l.take();
-            try a.stringBytes(t);
+            try a.emitString(t);
         } else {
             try a.store(a.byteOf(try a.expression(l)));
         }
@@ -1498,55 +1502,58 @@ fn dataBytes(a: *Assembler, l: *Line) Error!void {
     }
 }
 
-fn asciiString(a: *Assembler, l: *Line, zero: bool) Error!void {
+fn asciiString(a: *Assembler, l: *Line, op: enum { ascii, asciz }) Error!void {
     const t = l.take();
     if (t.tag != .string) return a.fail("expected a string, found '{s}'", .{t.text});
-    try a.stringBytes(t);
-    if (zero) try a.store(0);
+    try a.emitString(t);
+    if (op == .asciz) try a.store(0);
 }
 
 /// The bytes of a string token: sjasmplus escapes in "...", and '' for a
 /// quote in '...'.
-const StringBytes = struct {
+const StringIterator = struct {
+    /// The token without its closing quote.
     text: []const u8,
     quote: u8,
+    /// Past the opening quote.
     pos: usize = 1,
 
-    fn init(token_text: []const u8) StringBytes {
+    fn init(token_text: []const u8) StringIterator {
         return .{ .text = token_text[0 .. token_text.len - 1], .quote = token_text[0] };
+    }
+
+    /// `a` reports unknown escapes.
+    fn next(it: *StringIterator, a: *Assembler) Error!?u8 {
+        if (it.pos >= it.text.len) return null;
+        const c = it.text[it.pos];
+        it.pos += 1;
+        if (c == '\'' and it.quote == '\'') {
+            it.pos += 1; // the second quote of ''
+            return c;
+        }
+        if (c != '\\' or it.quote != '"') return c;
+        const e = it.text[it.pos];
+        it.pos += 1;
+        return switch (std.ascii.toLower(e)) {
+            '\\', '\'', '"', '?' => e,
+            '0' => 0,
+            'a' => 7,
+            'b' => 8,
+            'd' => 0x7F,
+            'e' => 0x1B,
+            'f' => 0x0C,
+            'n' => 0x0A,
+            'r' => 0x0D,
+            't' => 0x09,
+            'v' => 0x0B,
+            else => a.fail("unknown escape '\\{c}' in string", .{e}),
+        };
     }
 };
 
-fn stringByte(a: *Assembler, it: *StringBytes) Error!?u8 {
-    if (it.pos >= it.text.len) return null;
-    const c = it.text[it.pos];
-    it.pos += 1;
-    if (c == '\'' and it.quote == '\'') {
-        it.pos += 1; // the second quote of ''
-        return c;
-    }
-    if (c != '\\' or it.quote != '"') return c;
-    const e = it.text[it.pos];
-    it.pos += 1;
-    return switch (std.ascii.toLower(e)) {
-        '\\', '\'', '"', '?' => e,
-        '0' => 0,
-        'a' => 7,
-        'b' => 8,
-        'd' => 0x7F,
-        'e' => 0x1B,
-        'f' => 0x0C,
-        'n' => 0x0A,
-        'r' => 0x0D,
-        't' => 0x09,
-        'v' => 0x0B,
-        else => a.fail("unknown escape '\\{c}' in string", .{e}),
-    };
-}
-
-fn stringBytes(a: *Assembler, t: Token) Error!void {
-    var it: StringBytes = .init(t.text);
-    while (try a.stringByte(&it)) |c| try a.store(c);
+fn emitString(a: *Assembler, t: Token) Error!void {
+    var it: StringIterator = .init(t.text);
+    while (try it.next(a)) |c| try a.store(c);
 }
 
 fn dataWords(a: *Assembler, l: *Line) Error!void {
