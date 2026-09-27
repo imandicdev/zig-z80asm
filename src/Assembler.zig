@@ -496,10 +496,13 @@ fn displacementOf(a: *Assembler, v: Value) i8 {
     return @truncate(v.value);
 }
 
-/// Offset of a JR/DJNZ target from the end of the 2-byte instruction.
+/// Length of JR and of DJNZ.
+const jr_len = isa.jr(0).len;
+
+/// Offset of a JR/DJNZ target from the end of the instruction.
 fn relativeOf(a: *Assembler, target: Value) i8 {
     if (!target.known) return 0;
-    const offset = @as(i64, target.value) - (a.state.statement_pc + 2);
+    const offset = @as(i64, target.value) - (a.state.statement_pc + jr_len);
     return std.math.cast(i8, offset) orelse {
         a.report("relative jump out of range ({d} bytes)", .{offset});
         return 0;
@@ -591,6 +594,10 @@ fn expectFits(a: *Assembler, l: *const Line) Error!void {
     if (l.truncated) return a.fail("line has more than {d} tokens", .{max_line_tokens});
 }
 
+/// Longest value of DB and DW: the token buffer must also hold the comma after
+/// it, and its last slot holds the `.end`.
+const max_value_tokens = max_line_tokens - 2;
+
 /// Before each value of DB and DW: on a truncated line, drops the tokens
 /// already used and lexes on when the next value might not be complete.
 fn nextValue(a: *Assembler, l: *Line) Error!void {
@@ -600,7 +607,7 @@ fn nextValue(a: *Assembler, l: *Line) Error!void {
     l.len = rest;
     l.pos = 0;
     try a.lex(l);
-    if (l.truncated and !l.commaAhead()) return a.fail("value has more than {d} tokens", .{max_line_tokens - 2});
+    if (l.truncated and !l.commaAhead()) return a.fail("value has more than {d} tokens", .{max_value_tokens});
 }
 
 fn expectEnd(a: *Assembler, l: *Line) Error!void {
@@ -615,18 +622,20 @@ fn expect(a: *Assembler, l: *Line, tag: Token.Tag, what: []const u8) Error!void 
 
 const Operator = enum { @"or", xor, @"and", shl, shr, add, sub, mul, div, mod };
 
+// A switch rather than a std.EnumArray constant, which made the Spectrum ROM
+// 0.5 s slower at comptime. A higher precedence binds tighter.
 fn binaryOperator(tag: Token.Tag) ?struct { op: Operator, precedence: u8 } {
     return switch (tag) {
         .pipe => .{ .op = .@"or", .precedence = 1 },
-        .caret => .{ .op = .xor, .precedence = 2 },
-        .ampersand => .{ .op = .@"and", .precedence = 3 },
-        .shift_left => .{ .op = .shl, .precedence = 4 },
-        .shift_right => .{ .op = .shr, .precedence = 4 },
-        .plus => .{ .op = .add, .precedence = 5 },
-        .minus => .{ .op = .sub, .precedence = 5 },
-        .asterisk => .{ .op = .mul, .precedence = 6 },
-        .slash => .{ .op = .div, .precedence = 6 },
-        .percent => .{ .op = .mod, .precedence = 6 },
+        .caret => .{ .op = .xor, .precedence = 2 }, // smell-ok: precedence level
+        .ampersand => .{ .op = .@"and", .precedence = 3 }, // smell-ok: precedence level
+        .shift_left => .{ .op = .shl, .precedence = 4 }, // smell-ok: precedence level
+        .shift_right => .{ .op = .shr, .precedence = 4 }, // smell-ok: precedence level
+        .plus => .{ .op = .add, .precedence = 5 }, // smell-ok: precedence level
+        .minus => .{ .op = .sub, .precedence = 5 }, // smell-ok: precedence level
+        .asterisk => .{ .op = .mul, .precedence = 6 }, // smell-ok: precedence level
+        .slash => .{ .op = .div, .precedence = 6 }, // smell-ok: precedence level
+        .percent => .{ .op = .mod, .precedence = 6 }, // smell-ok: precedence level
         else => null,
     };
 }
@@ -654,8 +663,8 @@ fn apply(a: *Assembler, op: Operator, lhs: Value, rhs: Value) Value {
         .@"or" => x | y,
         .xor => x ^ y,
         .@"and" => x & y,
-        .shl => if (y < 0 or y > 31) 0 else x << @intCast(y),
-        .shr => if (y < 0 or y > 31) 0 else x >> @intCast(y),
+        .shl => if (std.math.cast(u5, y)) |n| x << n else 0,
+        .shr => if (std.math.cast(u5, y)) |n| x >> n else 0,
         .add => x +% y,
         .sub => x -% y,
         .mul => x *% y,
@@ -755,11 +764,15 @@ fn hashHex(a: *Assembler, hash: Token, t: Token) Error!?Value {
 
 /// 0x1F, $1F, 1Fh, 0b1010, 1010b or decimal. %1010 is handled in `primary`.
 fn parseNumber(text: []const u8) ?i32 {
-    if (text.len > 2 and text[0] == '0' and (text[1] == 'x' or text[1] == 'X')) return parseDigits(text[2..], 16);
+    // Byte comparisons rather than std.mem.startsWith and friends: those calls,
+    // about 19,000 for the Spectrum ROM, cost 0.5 s at comptime.
+    const hex = "0x";
+    const bin = "0b";
+    if (text.len > hex.len and text[0] == '0' and (text[1] == 'x' or text[1] == 'X')) return parseDigits(text[hex.len..], 16);
     if (text.len > 1 and text[0] == '$') return parseDigits(text[1..], 16);
     const last = text[text.len - 1];
     if (text.len > 1 and (last == 'h' or last == 'H')) return parseDigits(text[0 .. text.len - 1], 16);
-    if (text.len > 2 and text[0] == '0' and (text[1] == 'b' or text[1] == 'B')) return parseDigits(text[2..], 2);
+    if (text.len > bin.len and text[0] == '0' and (text[1] == 'b' or text[1] == 'B')) return parseDigits(text[bin.len..], 2);
     if (text.len > 1 and (last == 'b' or last == 'B')) return parseDigits(text[0 .. text.len - 1], 2);
     return parseDigits(text, 10);
 }
@@ -775,6 +788,10 @@ fn register(name: []const u8) ?Reg {
     return NameTable(Reg).get(name);
 }
 
+/// Building a NameTable hashes every tag name byte by byte and probes for a
+/// free slot; the default quota of 1000 branches is too small for Keyword.
+const name_table_quota = 100_000;
+
 /// Case-insensitive lookup of an enum by tag name through a hash table built at
 /// comptime. std.meta.stringToEnum on a lowercased copy is much slower when the
 /// assembler runs at comptime.
@@ -788,7 +805,7 @@ fn NameTable(comptime E: type) type {
     };
     return struct {
         const slots: [size]?E = blk: {
-            @setEvalBranchQuota(100_000);
+            @setEvalBranchQuota(name_table_quota);
             var table: [size]?E = @splat(null);
             for (fields) |f| {
                 var i = hashLower(f.name) & (size - 1);
@@ -924,7 +941,7 @@ fn operand(a: *Assembler, l: *Line) Error!Operand {
     const start = l.pos;
     const v = try a.expression(l);
     // sdas writes (IX+d) as "d (ix)".
-    if (l.peek().tag == .l_paren and l.peekAt(2).tag == .r_paren) {
+    if (l.peek().tag == .l_paren and l.peekAt(2).tag == .r_paren) { // smell-ok: the ")" after "(" and the register
         if (register(l.peekAt(1).text)) |r| if (index(r)) |idx| {
             _ = l.take();
             _ = l.take();
@@ -954,7 +971,10 @@ fn closes(l: *const Line, open: usize, close: usize) bool {
     return false;
 }
 
-fn operandPair(a: *Assembler, l: *Line) Error![2]Operand {
+/// Operands of LD, EX and OUT, the instructions that take two.
+const max_operands = 2;
+
+fn operandPair(a: *Assembler, l: *Line) Error![max_operands]Operand {
     const first = try a.operand(l);
     try a.expect(l, .comma, "','");
     return .{ first, try a.operand(l) };
@@ -1220,7 +1240,7 @@ fn invalid(a: *Assembler) Error {
     return a.fail("invalid operands", .{});
 }
 
-fn encodeLd(a: *Assembler, ops: [2]Operand) Error!isa.Encoding {
+fn encodeLd(a: *Assembler, ops: [max_operands]Operand) Error!isa.Encoding {
     const dst, const src = ops;
     switch (dst) {
         .reg => |d| {

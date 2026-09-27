@@ -5,8 +5,11 @@
 //! Nn = 16-bit immediate, Mem = (nn), Idx = IX/IY, IdxD = (IX+d)/(IY+d).
 //! Functions do no range checking; callers validate operands first.
 
+/// Longest instruction: prefix, CB, displacement and opcode of DDCB/FDCB.
+pub const max_instruction_len = 4;
+
 pub const Encoding = struct {
-    bytes: [4]u8,
+    bytes: [max_instruction_len]u8,
     len: u3,
 
     pub fn slice(e: *const Encoding) []const u8 {
@@ -23,17 +26,21 @@ pub const Alu = enum(u3) { add, adc, sub, sbc, @"and", xor, @"or", cp };
 /// `sll` (CB 30-37) is undocumented: shifts left and sets bit 0.
 pub const Rot = enum(u3) { rlc, rrc, rl, rr, sla, sra, sll, srl };
 
+/// The instruction made of `bytes`, an array; its length is the array's.
+fn encoding(bytes: anytype) Encoding {
+    return .{ .bytes = bytes ++ [_]u8{0} ** (max_instruction_len - bytes.len), .len = bytes.len };
+}
 fn enc1(b0: u8) Encoding {
-    return .{ .bytes = .{ b0, 0, 0, 0 }, .len = 1 };
+    return encoding([_]u8{b0});
 }
 fn enc2(b0: u8, b1: u8) Encoding {
-    return .{ .bytes = .{ b0, b1, 0, 0 }, .len = 2 };
+    return encoding([_]u8{ b0, b1 });
 }
 fn enc3(b0: u8, b1: u8, b2: u8) Encoding {
-    return .{ .bytes = .{ b0, b1, b2, 0 }, .len = 3 };
+    return encoding([_]u8{ b0, b1, b2 });
 }
 fn enc4(b0: u8, b1: u8, b2: u8, b3: u8) Encoding {
-    return .{ .bytes = .{ b0, b1, b2, b3 }, .len = 4 };
+    return encoding([_]u8{ b0, b1, b2, b3 });
 }
 
 fn lo(v: u16) u8 {
