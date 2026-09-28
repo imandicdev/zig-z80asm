@@ -21,12 +21,12 @@ The last form also assembles the Spectrum ROM at comptime, which is slow.
 | Origin of the text | The Complete Spectrum ROM Disassembly (Dr. Ian Logan, Dr. Frank O'Hara), with corrections and comments by others; sjasmplus adaptation by z00m |
 | Reference binary | `48.rom` from the Fuse emulator, SHA-1 `5ea7c2b824672e914525d1d5c419d71b84a426a2` (the value MAME lists for the 48K ROM) |
 | License | The ROM code is copyright Amstrad plc. Amstrad allows distribution of the ROMs for use with emulators but keeps the copyright (message by Cliff Lawson, comp.sys.sinclair, 1999-08-31, reproduced in the repository's LICENSE.md). It may not be sold or included in this repository. |
-| Preparation | `fetch.py` writes `zx-spectrum-rom.prepared.asm`: the `include "zx-spectrum-sysvars.asm"` line is replaced by that file's text and the `OUTPUT "48.ROM"` line is dropped, because INCLUDE and OUTPUT are not in z80asm 0.2. No other change. |
-| Result | Identical: 16384 bytes, 0 differences, same SHA-1, at runtime and at comptime (`-Dprograms-comptime=true`). Times are under Performance. |
+| Preparation | None. The source INCLUDEs `zx-spectrum-sysvars.asm`, which the test passes in `.files` and the command-line tool reads from next to it, and names its OUTPUT `48.ROM`. Up to 0.2, which had neither INCLUDE nor OUTPUT, `fetch.py` put the sysvars text in place of the INCLUDE and dropped the OUTPUT line. |
+| Result | Identical: 16384 bytes, 0 differences, same SHA-1, at runtime, at comptime (`-Dprograms-comptime=true`) and from the command-line tool. Times are under Performance. |
 
 ## Performance
 
-The full Spectrum ROM (17,699 lines after preparation), before the
+The full Spectrum ROM (17,699 lines with the sysvars file), before the
 optimizations, in 0.1.0 and in 0.2.0. Zig 0.16.0, Windows x86_64.
 
 | | Before | 0.1.0 | 0.2.0 |

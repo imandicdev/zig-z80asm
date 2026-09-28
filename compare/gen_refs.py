@@ -70,8 +70,11 @@ def main():
     reference.add_option(parser, reference.SJASMPLUS)
     sjasm = reference.path(parser, parser.parse_args(), reference.SJASMPLUS)
 
-    # sjasmplus rejects backslashes in paths, so run it next to the files.
+    # sjasmplus rejects backslashes in paths, so run it next to the files,
+    # with the files that cases INCLUDE (*.inc) and INCBIN (*.dat).
     with tempfile.TemporaryDirectory() as tmp:
+        for extra in glob.glob(os.path.join(CASES, "*.inc")) + glob.glob(os.path.join(CASES, "*.dat")):
+            shutil.copy(extra, tmp)
         for asm in sorted(os.path.basename(p) for p in glob.glob(os.path.join(CASES, "*.asm"))):
             out = asm[:-4] + ".bin"
             with open(os.path.join(CASES, asm), newline="") as f:
@@ -79,8 +82,9 @@ def main():
             with open(os.path.join(tmp, asm), "w", newline="") as f:
                 f.write(split_data(source))
             r = subprocess.run([sjasm, "--nologo", "--raw=" + out, asm], capture_output=True, text=True, cwd=tmp)
+            # "include data: ..." is how sjasmplus reports each INCBIN.
             noise = [l for l in r.stdout.splitlines() + r.stderr.splitlines()
-                     if l and not l.startswith("Pass") and not l.startswith("Errors: 0")]
+                     if l and not l.startswith(("Pass", "Errors: 0", "include data:"))]
             if r.returncode != 0 or noise:
                 print("\n".join(noise))
                 sys.exit("sjasmplus did not accept %s cleanly" % asm)

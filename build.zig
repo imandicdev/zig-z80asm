@@ -116,7 +116,12 @@ pub fn build(b: *std.Build) void {
         });
         programs.addImport("z80asm", mod);
         programs.addOptions("options", build_options);
-        embedThirdParty(b, programs, dir, &.{ "spectrum_rom_asm", "spectrum_48_rom", "sdcc_sample_asm", "sdcc_sample_bin" });
+        embedThirdParty(b, programs, dir, &.{ "spectrum_rom_asm", "spectrum_sysvars_asm", "spectrum_48_rom", "sdcc_sample_asm", "sdcc_sample_bin" });
+        // The command-line tool on the unmodified ROM source, which INCLUDEs
+        // the sysvars file next to it.
+        const cli_rom = b.addRunArtifact(exe);
+        cli_rom.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, thirdPartyPath("spectrum_rom_asm") }) });
+        programs.addAnonymousImport("cli_rom", .{ .root_source_file = cli_rom.addOutputFileArg("48.rom") });
         const programs_step = b.step("programs", "Compare known programs with their original binaries");
         programs_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = programs })).step);
 
@@ -127,7 +132,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         bench.addImport("z80asm", mod);
-        embedThirdParty(b, bench, dir, &.{ "spectrum_rom_asm", "spectrum_48_rom" });
+        embedThirdParty(b, bench, dir, &.{ "spectrum_rom_asm", "spectrum_sysvars_asm", "spectrum_48_rom" });
         const bench_run = b.addRunArtifact(b.addExecutable(.{ .name = "bench", .root_module = bench }));
         bench_run.addArg(b.fmt("{d}", .{b.option(usize, "bench-lines", "Lines in the medium slice") orelse 2500}));
         const medium = bench_run.addOutputFileArg("rom-medium.asm");
@@ -144,6 +149,7 @@ pub fn build(b: *std.Build) void {
         bench_comptime.addImport("z80asm", mod);
         bench_comptime.addOptions("options", nonce_options);
         bench_comptime.addAnonymousImport("rom_medium_asm", .{ .root_source_file = medium });
+        embedThirdParty(b, bench_comptime, dir, &.{"spectrum_sysvars_asm"});
         b.step("bench-comptime", "Assemble the medium slice at comptime")
             .dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = bench_comptime })).step);
     }
@@ -173,11 +179,17 @@ pub fn build(b: *std.Build) void {
 
 /// Files that test/programs/fetch.py puts in the -Dthirdparty directory.
 const third_party_files = [_]struct { name: []const u8, path: []const u8 }{
-    .{ .name = "spectrum_rom_asm", .path = "spectrum-rom/zx-spectrum-rom.prepared.asm" },
+    .{ .name = "spectrum_rom_asm", .path = "spectrum-rom/zx-spectrum-rom.asm" },
+    .{ .name = "spectrum_sysvars_asm", .path = "spectrum-rom/zx-spectrum-sysvars.asm" },
     .{ .name = "spectrum_48_rom", .path = "spectrum-rom/48.rom" },
     .{ .name = "sdcc_sample_asm", .path = "sdcc/sdcc_sample.asm" },
     .{ .name = "sdcc_sample_bin", .path = "sdcc/sdcc_sample.sdas.bin" },
 };
+
+fn thirdPartyPath(name: []const u8) []const u8 {
+    for (third_party_files) |f| if (std.mem.eql(u8, f.name, name)) return f.path;
+    std.debug.panic("unknown third-party file '{s}'", .{name});
+}
 
 /// Makes the named third-party files available to @embedFile under their names.
 fn embedThirdParty(b: *std.Build, m: *std.Build.Module, dir: []const u8, names: []const []const u8) void {

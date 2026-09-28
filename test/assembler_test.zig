@@ -336,3 +336,60 @@ fn ifInBody(_: void, a: *Assembler) Assembler.Error!void {
     try a.line("  ENDIF");
     try a.line("  DB 3");
 }
+
+fn firstDiagnostic(r: z80.Result, buf: []u8) ![]const u8 {
+    try std.testing.expect(r.diagnostics.len > 0);
+    return std.fmt.bufPrint(buf, "{f}", .{r.diagnostics[0]});
+}
+
+test "a diagnostic in an included file names the file" {
+    const files = [_]z80.File{.{ .name = "part.inc", .data = "  NOP\n  JP nowhere\n" }};
+    const r = z80.assemble("  INCLUDE \"part.inc\"\n", .{ .files = &files }, workspace.buffers());
+    var buf: [100]u8 = undefined;
+    try std.testing.expectEqualStrings("part.inc:2: undefined symbol 'nowhere'", try firstDiagnostic(r, &buf));
+}
+
+test "OUTPUT gives the output name, and a path may use either slash" {
+    const files = [_]z80.File{.{ .name = "lib/part.inc", .data = "  DB 7\n" }};
+    const r = z80.assemble("  OUTPUT \"game.bin\"\n  INCLUDE \"lib\\part.inc\"\n", .{ .files = &files }, workspace.buffers());
+    try expectOk(r);
+    try std.testing.expectEqualStrings("game.bin", r.output_name.?);
+    try std.testing.expectEqualSlices(u8, &.{7}, r.bytes);
+}
+
+test "missing files are listed with the file that names them" {
+    const files = [_]z80.File{.{ .name = "part.inc", .data = "  INCBIN \"data.bin\"\n" }};
+    const r = z80.assemble("  INCLUDE \"part.inc\"\n  INCLUDE \"other.inc\"\n", .{ .files = &files }, workspace.buffers());
+    try std.testing.expectEqual(2, r.missing.len);
+    try std.testing.expectEqualStrings("data.bin", r.missing[0].name);
+    try std.testing.expectEqualStrings("part.inc", r.missing[0].from);
+    try std.testing.expectEqualStrings("other.inc", r.missing[1].name);
+    try std.testing.expectEqualStrings("", r.missing[1].from);
+}
+
+test "INCLUDE nests up to max_include_depth" {
+    const depth = Assembler.max_include_depth;
+    const files = comptime blk: {
+        var list: [depth + 1]z80.File = undefined;
+        for (&list, 0..) |*f, i| f.* = .{
+            .name = std.fmt.comptimePrint("f{d}.inc", .{i}),
+            .data = std.fmt.comptimePrint("  INCLUDE \"f{d}.inc\"\n", .{i + 1}),
+        };
+        break :blk list;
+    };
+    const r = z80.assemble("  INCLUDE \"f0.inc\"\n", .{ .files = &files }, workspace.buffers());
+    var buf: [100]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        std.fmt.comptimePrint("f{d}.inc:1: INCLUDE nested more than {d} deep", .{ depth - 1, depth }),
+        try firstDiagnostic(r, &buf),
+    );
+}
+
+test "INCBIN takes its offset from a later pass when it is a forward reference" {
+    const files = [_]z80.File{.{ .name = "d.dat", .data = "abcd" }};
+    const source = "  INCBIN \"d.dat\", skip\nskip EQU 3\n";
+    try std.testing.expectEqualSlices(u8, "d", comptime z80.comptimeAssemble(source, .{ .files = &files }));
+    const r = z80.assemble(source, .{ .files = &files }, workspace.buffers());
+    try expectOk(r);
+    try std.testing.expectEqualSlices(u8, "d", r.bytes);
+}

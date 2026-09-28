@@ -73,5 +73,10 @@ pub const cases = [_]Case{
     .{ .name = "single_equal_is_not_equality", .source = "  DB 1 = 1\n", .expect = "line 1: unexpected '='" },
     .{ .name = "local_label_twice_in_one_scope", .source = "outer:\n.x: NOP\n.x: NOP\n", .expect = "line 3: duplicate symbol '.x'" },
     .{ .name = "local_label_of_another_scope", .source = "a1:\n.x: NOP\nb1:\n  JP .x\n", .expect = "line 4: undefined symbol '.x'" },
+    .{ .name = "missing_include", .source = "  INCLUDE \"nothere.asm\"\n", .expect = "line 1: file 'nothere.asm' is not in the file table" },
+    .{ .name = "include_without_name", .source = "  INCLUDE nothere\n", .expect = "line 1: expected a file name in quotes, found 'nothere'" },
+    .{ .name = "include_cycle", .options = ".{ .files = &.{.{ .name = \"a.asm\", .data = \"  INCLUDE \\\"a.asm\\\"\\n\" }} }", .source = "  INCLUDE \"a.asm\"\n", .expect = "a.asm:1: 'a.asm' includes itself" },
+    .{ .name = "if_open_at_end_of_include", .options = ".{ .files = &.{.{ .name = \"i.asm\", .data = \"  IF 1\\n  NOP\\n\" }} }", .source = "  INCLUDE \"i.asm\"\n", .expect = "i.asm:1: IF without ENDIF" },
+    .{ .name = "incbin_past_the_end", .options = ".{ .files = &.{.{ .name = \"d.dat\", .data = \"abcd\" }} }", .source = "  INCBIN \"d.dat\", 2, 5\n", .expect = "line 1: INCBIN of 5 bytes at 2 is past the end of 'd.dat' (4 bytes)" },
     .{ .name = "garbage_after_many_values", .source = "  DW " ++ "1," ** 100 ++ "2 3\n", .expect = "line 1: unexpected '3'" },
 };

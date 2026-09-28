@@ -20,6 +20,8 @@ pub const Options = Assembler.Options;
 pub const Buffers = Assembler.Buffers;
 pub const Result = Assembler.Result;
 pub const Diagnostic = Assembler.Diagnostic;
+pub const File = Assembler.File;
+pub const Missing = Assembler.Missing;
 pub const Workspace = Assembler.Workspace;
 pub const assemble = Assembler.assemble;
 pub const run = Assembler.run;
@@ -34,6 +36,9 @@ pub const ComptimeOptions = struct {
     machine: ?Machine = null,
     /// The format of the returned file; without it, the machine's, or bin.
     format: ?Format = null,
+    /// The files INCLUDE and INCBIN can name, for example
+    /// `.{ .{ .name = "sysvars.asm", .data = @embedFile("sysvars.asm") } }`.
+    files: []const File = &.{},
     /// The symbol table is a hash table of a power of two slots, at most half
     /// full, so the capacity is this rounded up to a power of two.
     max_symbols: usize = 2048,
@@ -41,7 +46,7 @@ pub const ComptimeOptions = struct {
 
     /// The same choices as options of the runtime entry points.
     pub fn assemblerOptions(o: ComptimeOptions) Options {
-        return .{ .origin = o.origin, .machine = o.machine, .format = o.format };
+        return .{ .origin = o.origin, .machine = o.machine, .format = o.format, .files = o.files };
     }
 };
 

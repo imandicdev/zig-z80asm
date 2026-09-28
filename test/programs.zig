@@ -9,8 +9,8 @@ const options = @import("options");
 
 var workspace: z80.Workspace(0x10000, 4096, 16) = undefined;
 
-fn expectImage(name: []const u8, source: []const u8, expected: []const u8) !void {
-    const r = z80.assemble(source, .{}, workspace.buffers());
+fn expectImage(name: []const u8, source: []const u8, files: []const z80.File, expected: []const u8) !void {
+    const r = z80.assemble(source, .{ .files = files }, workspace.buffers());
     for (r.diagnostics) |d| std.debug.print("{s}: {f}\n", .{ name, d });
     try std.testing.expect(r.ok());
     try expectSame(name, "runtime", expected, r.bytes);
@@ -26,18 +26,24 @@ fn expectSame(name: []const u8, mode: []const u8, expected: []const u8, got: []c
     return error.TestExpectedEqual;
 }
 
-// ZX Spectrum 48K ROM: z00m128/zxs-rom as prepared by fetch.py.
+// ZX Spectrum 48K ROM: z00m128/zxs-rom, unmodified. It INCLUDEs the system
+// variables and names its OUTPUT.
 
 const spectrum_source = @embedFile("spectrum_rom_asm");
 const spectrum_rom = @embedFile("spectrum_48_rom");
+const spectrum_files = [_]z80.File{.{ .name = "zx-spectrum-sysvars.asm", .data = @embedFile("spectrum_sysvars_asm") }};
 
 test "ZX Spectrum 48K ROM is identical to the original" {
-    try expectImage("48.rom", spectrum_source, spectrum_rom);
+    try expectImage("48.rom", spectrum_source, &spectrum_files, spectrum_rom);
 }
 
 test "ZX Spectrum 48K ROM at comptime" {
     if (!options.programs_comptime) return error.SkipZigTest;
-    try expectSame("48.rom", "comptime", spectrum_rom, comptime z80.comptimeAssemble(spectrum_source, .{}));
+    try expectSame("48.rom", "comptime", spectrum_rom, comptime z80.comptimeAssemble(spectrum_source, .{ .files = &spectrum_files }));
+}
+
+test "the command-line tool assembles the unmodified ROM source" {
+    try expectSame("48.rom", "z80asm tool", spectrum_rom, @embedFile("cli_rom"));
 }
 
 // SDCC: test/programs/sdcc_sample.c compiled with `sdcc -mz80 -S`, compared
@@ -47,6 +53,6 @@ const sdcc_source = @embedFile("sdcc_sample_asm");
 const sdcc_reference = @embedFile("sdcc_sample_bin");
 
 test "SDCC output matches sdasz80" {
-    try expectImage("sdcc_sample", sdcc_source, sdcc_reference);
+    try expectImage("sdcc_sample", sdcc_source, &.{}, sdcc_reference);
     try expectSame("sdcc_sample", "comptime", sdcc_reference, comptime z80.comptimeAssemble(sdcc_source, .{}));
 }

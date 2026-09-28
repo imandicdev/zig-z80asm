@@ -7,13 +7,14 @@ const z80 = @import("z80asm");
 const options = @import("options");
 
 const source = @embedFile("rom_medium_asm");
+const files = [_]z80.File{.{ .name = "zx-spectrum-sysvars.asm", .data = @embedFile("spectrum_sysvars_asm") }};
 
 var workspace: z80.Workspace(0x10000, 4096, 16) = undefined;
 
 test "comptime and runtime give the same image" {
     std.mem.doNotOptimizeAway(options.nonce);
-    const at_comptime = comptime z80.comptimeAssemble(source, .{});
-    const r = z80.assemble(source, .{}, workspace.buffers());
+    const at_comptime = comptime z80.comptimeAssemble(source, .{ .files = &files });
+    const r = z80.assemble(source, .{ .files = &files }, workspace.buffers());
     try std.testing.expect(r.ok());
     try std.testing.expectEqualSlices(u8, r.bytes, at_comptime);
 }

@@ -8,8 +8,11 @@ test "runtime reports the same message as the comptime compile error" {
     const gpa = std.testing.allocator;
     var failures: usize = 0;
     for (cases) |case| {
-        // The options are Zig source for comptimeAssemble, which is also ZON.
-        const text = try gpa.dupeZ(u8, case.options);
+        // The options are Zig source for comptimeAssemble, which is also ZON
+        // once the & of slices (&.{...}, not written in ZON) is taken out.
+        const zon = try std.mem.replaceOwned(u8, gpa, case.options, "&.{", ".{");
+        defer gpa.free(zon);
+        const text = try gpa.dupeZ(u8, zon);
         defer gpa.free(text);
         const options = try std.zon.parse.fromSliceAlloc(z80.ComptimeOptions, gpa, text, null, .{});
         defer std.zon.parse.free(gpa, options);

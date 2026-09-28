@@ -10,6 +10,7 @@ const z80 = @import("z80asm");
 
 const rom_source = @embedFile("spectrum_rom_asm");
 const rom = @embedFile("spectrum_48_rom");
+const rom_files = [_]z80.File{.{ .name = "zx-spectrum-sysvars.asm", .data = @embedFile("spectrum_sysvars_asm") }};
 
 const runs = 25;
 
@@ -21,7 +22,7 @@ pub fn main(init: std.process.Init) !void {
     if (args.len != 3) std.process.fatal("usage: bench LINES MEDIUM.asm", .{});
     const lines = try std.fmt.parseInt(usize, args[1], 10);
 
-    const r = z80.assemble(rom_source, .{}, workspace.buffers());
+    const r = z80.assemble(rom_source, .{ .files = &rom_files }, workspace.buffers());
     if (!r.ok() or !std.mem.eql(u8, r.bytes, rom)) std.process.fatal("the ROM does not assemble to 48.rom", .{});
 
     const medium = try slice(arena, rom_source, lines);
@@ -50,7 +51,7 @@ fn time(io: std.Io, text: []const u8) Timing {
     var passes: u8 = 0;
     for (&samples) |*s| {
         const start = std.Io.Timestamp.now(io, .awake);
-        const r = z80.assemble(text, .{}, workspace.buffers());
+        const r = z80.assemble(text, .{ .files = &rom_files }, workspace.buffers());
         s.* = @intCast(start.untilNow(io, .awake).toMicroseconds());
         passes = r.passes;
     }
@@ -70,7 +71,7 @@ fn slice(arena: std.mem.Allocator, full: []const u8, lines: usize) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     try out.appendSlice(arena, full[0..end]);
 
-    const r = z80.assemble(full[0..end], .{}, workspace.buffers());
+    const r = z80.assemble(full[0..end], .{ .files = &rom_files }, workspace.buffers());
     if (r.diagnostics_dropped > 0) std.process.fatal("more than {d} diagnostics", .{workspace.diagnostics.len});
     var added: std.ArrayList([]const u8) = .empty;
     next: for (r.diagnostics) |d| {
@@ -82,7 +83,7 @@ fn slice(arena: std.mem.Allocator, full: []const u8, lines: usize) ![]const u8 {
         try added.append(arena, name);
         try out.print(arena, "{s}:\n", .{name});
     }
-    const check = z80.assemble(out.items, .{}, workspace.buffers());
+    const check = z80.assemble(out.items, .{ .files = &rom_files }, workspace.buffers());
     for (check.diagnostics) |d| std.debug.print("medium: {f}\n", .{d});
     if (!check.ok()) std.process.fatal("the medium slice does not assemble", .{});
     return out.items;

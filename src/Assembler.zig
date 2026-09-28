@@ -19,6 +19,10 @@ const Assembler = @This();
 pub const max_passes = 8;
 /// IF blocks open at the same time.
 pub const max_if_depth = 32;
+/// Files included inside each other.
+pub const max_include_depth = 16;
+/// Missing files one assembly can report (`Result.missing`).
+pub const max_missing = 16;
 pub const max_line_tokens = 64;
 pub const message_capacity = 120;
 
@@ -36,6 +40,22 @@ const address_space = 0x10000;
 
 pub const Error = error{AssemblyFailed};
 
+/// A file that INCLUDE and INCBIN can name. `data` must stay valid until
+/// assembly ends, like the source text.
+pub const File = struct {
+    name: []const u8,
+    data: []const u8,
+};
+
+/// A file that INCLUDE or INCBIN names and `Options.files` does not have.
+pub const Missing = struct {
+    name: []const u8,
+    /// The file that names it; empty for the main source.
+    from: []const u8,
+    /// The line of `from` that names it.
+    line: u32,
+};
+
 pub const Options = struct {
     /// Address of the first byte when the source does not start with ORG;
     /// without it, the machine's origin, or 0.
@@ -44,6 +64,9 @@ pub const Options = struct {
     machine: ?Machine = null,
     /// The output format; without it, the machine's, or bin.
     format: ?formats.Format = null,
+    /// The files INCLUDE and INCBIN can name, found by the exact name in the
+    /// directive, with \ read as /.
+    files: []const File = &.{},
 
     fn defaultOrigin(o: Options) u16 {
         return o.origin orelse if (o.machine) |m| m.origin() else 0;
@@ -68,6 +91,8 @@ pub const Symbol = struct {
 pub const Diagnostic = struct {
     /// Source line, or 0 for statements that did not come from text.
     line: u32,
+    /// The included file the line is in; empty for the main source.
+    file: []const u8,
     len: u8,
     buf: [message_capacity]u8,
 
@@ -75,10 +100,15 @@ pub const Diagnostic = struct {
         return d.buf[0..d.len];
     }
 
-    /// "line 12: message", or just the message when there is no line. Both
-    /// the comptime and the runtime interface print diagnostics this way.
+    /// "line 12: message", "sysvars.asm:12: message" in an included file, or
+    /// just the message when there is no line. Both the comptime and the
+    /// runtime interface print diagnostics this way.
     pub fn format(d: Diagnostic, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        if (d.line != 0) try w.print("line {d}: ", .{d.line});
+        if (d.file.len != 0) {
+            try w.print("{s}:{d}: ", .{ d.file, d.line });
+        } else if (d.line != 0) {
+            try w.print("line {d}: ", .{d.line});
+        }
         try w.writeAll(d.buf[0..d.len]);
     }
 };
@@ -89,6 +119,8 @@ pub const Buffers = struct {
     /// it holds at most half as many symbols as it has slots.
     symbols: []Symbol,
     diagnostics: []Diagnostic,
+    /// Room for `Result.missing`.
+    missing: []Missing = &.{},
 };
 
 /// Fixed-capacity storage for one assembly, usable as a comptime or stack
@@ -99,9 +131,10 @@ pub fn Workspace(comptime output_size: usize, comptime symbol_slots: usize, comp
         output: [output_size]u8,
         symbols: [symbol_slots]Symbol,
         diagnostics: [diagnostic_count]Diagnostic,
+        missing: [max_missing]Missing,
 
         pub fn buffers(w: *@This()) Buffers {
-            return .{ .output = &w.output, .symbols = &w.symbols, .diagnostics = &w.diagnostics };
+            return .{ .output = &w.output, .symbols = &w.symbols, .diagnostics = &w.diagnostics, .missing = &w.missing };
         }
     };
 }
@@ -115,6 +148,12 @@ pub const Result = struct {
     entry: ?u16,
     /// The format the image is for; `formats.write` makes the file.
     format: formats.Format,
+    /// The name OUTPUT gives, if any.
+    output_name: ?[]const u8,
+    /// Files that INCLUDE or INCBIN named but `Options.files` does not have.
+    /// Each also gives a diagnostic; a caller that can read files, like the
+    /// command-line tool, adds them and assembles again.
+    missing: []const Missing,
     diagnostics: []const Diagnostic,
     /// Diagnostics that did not fit in the buffer.
     diagnostics_dropped: usize,
@@ -167,6 +206,14 @@ if_taken: u32 = 0,
 if_else: u32 = 0,
 /// Line of each open IF, for "IF without ENDIF".
 if_lines: [max_if_depth]u32 = undefined,
+/// The included file being assembled; empty for the main source.
+file_name: []const u8 = "",
+/// Names of the files being included, outermost first.
+open_files: [][]const u8,
+include_depth: u8 = 0,
+output_name: ?[]const u8 = null,
+missing: []Missing,
+missing_count: usize = 0,
 /// Uses of symbols without a value in this pass.
 unresolved: u32 = 0,
 /// Last symbol whose value differs from the previous pass.
@@ -200,6 +247,7 @@ overlap_reported: bool = false,
 pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (@TypeOf(ctx), *Assembler) Error!void) Result {
     const slots = if (buffers.symbols.len == 0) 0 else std.math.floorPowerOfTwo(usize, buffers.symbols.len);
     var written: [address_space / @bitSizeOf(u8)]u8 = undefined;
+    var open_files: [max_include_depth][]const u8 = undefined;
     var a: Assembler = .{
         .options = options,
         .default_origin = options.defaultOrigin(),
@@ -207,6 +255,8 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
         .symbols = buffers.symbols[0..slots],
         .diagnostics = buffers.diagnostics,
         .written = &written,
+        .open_files = &open_files,
+        .missing = buffers.missing,
     };
     for (a.symbols) |*s| s.name = "";
     while (true) {
@@ -237,6 +287,8 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
         .bytes = a.out[0 .. a.high - a.low],
         .entry = a.entry,
         .format = format,
+        .output_name = a.output_name,
+        .missing = a.missing[0..a.missing_count],
         .diagnostics = a.diagnostics[0..a.diagnostic_count],
         .diagnostics_dropped = a.diagnostics_dropped,
         .passes = a.pass,
@@ -249,6 +301,13 @@ pub fn assemble(source: []const u8, options: Options, buffers: Buffers) Result {
 }
 
 fn assembleLines(source: []const u8, a: *Assembler) Error!void {
+    a.assembleText(source);
+    a.line_number = 0;
+}
+
+/// Assembles the lines of the main source or of an included file, up to its
+/// end or an END.
+fn assembleText(a: *Assembler, source: []const u8) void {
     var reader: LineReader = .{ .source = source };
     var start: usize = 0;
     var number: u32 = 0;
@@ -263,7 +322,6 @@ fn assembleLines(source: []const u8, a: *Assembler) Error!void {
         if (poison_copies) if (next.copy) |c| @memset(c, poison_byte);
         start = next.end + 1;
     }
-    a.line_number = 0;
 }
 
 /// Hands out the lines of the source as copies in a local buffer. At comptime,
@@ -327,6 +385,10 @@ fn beginPass(a: *Assembler) void {
     a.skip_depth = 0;
     a.if_taken = 0;
     a.if_else = 0;
+    a.file_name = "";
+    a.include_depth = 0;
+    a.output_name = null;
+    a.missing_count = 0;
     a.unresolved = 0;
     a.changed = null;
     a.scope = "";
@@ -351,6 +413,7 @@ fn report(a: *Assembler, comptime fmt: []const u8, args: anytype) void {
     const d = &a.diagnostics[a.diagnostic_count];
     a.diagnostic_count += 1;
     d.line = a.line_number;
+    d.file = a.file_name;
     const text = std.fmt.bufPrint(&d.buf, fmt, args) catch &d.buf;
     d.len = @intCast(text.len);
 }
@@ -1214,6 +1277,9 @@ const Keyword = enum {
     ds,
     end,
     equ,
+    include,
+    incbin,
+    output,
     @"if",
     ifdef,
     ifndef,
@@ -1419,6 +1485,90 @@ fn conditional(a: *Assembler, l: *Line, kw: Keyword) Error!void {
     }
 }
 
+/// The quoted file name of INCLUDE, INCBIN or OUTPUT, as written.
+fn fileName(a: *Assembler, l: *Line) Error![]const u8 {
+    const t = l.take();
+    if (t.tag != .string) return a.fail("expected a file name in quotes, found '{s}'", .{t.text});
+    const text = a.kept(t);
+    return text[1 .. text.len - 1];
+}
+
+fn sameFileName(x: []const u8, y: []const u8) bool {
+    if (x.len != y.len) return false;
+    for (x, y) |c, d| {
+        if (c != d and !((c == '/' or c == '\\') and (d == '/' or d == '\\'))) return false;
+    }
+    return true;
+}
+
+fn findFile(a: *const Assembler, name: []const u8) ?[]const u8 {
+    for (a.options.files) |f| if (sameFileName(f.name, name)) return f.data;
+    return null;
+}
+
+fn missingFile(a: *Assembler, name: []const u8) Error {
+    const listed = for (a.missing[0..a.missing_count]) |m| {
+        if (sameFileName(m.name, name)) break true;
+    } else false;
+    if (!listed and a.missing_count < a.missing.len) {
+        a.missing[a.missing_count] = .{ .name = name, .from = a.file_name, .line = a.line_number };
+        a.missing_count += 1;
+    }
+    return a.fail("file '{s}' is not in the file table", .{name});
+}
+
+/// INCLUDE "name": the lines of the file, assembled here.
+fn include(a: *Assembler, l: *Line) Error!void {
+    const name = try a.fileName(l);
+    try a.expectEnd(l);
+    const data = a.findFile(name) orelse return a.missingFile(name);
+    if (a.include_depth == max_include_depth) return a.fail("INCLUDE nested more than {d} deep", .{max_include_depth});
+    for (a.open_files[0..a.include_depth]) |open| {
+        if (sameFileName(open, name)) return a.fail("'{s}' includes itself", .{name});
+    }
+    const outer_file = a.file_name;
+    const outer_line = a.line_number;
+    const outer_original = a.original;
+    const outer_if_depth = a.if_depth;
+    a.open_files[a.include_depth] = name;
+    a.include_depth += 1;
+    a.file_name = name;
+    a.assembleText(data);
+    if (a.if_depth > outer_if_depth) {
+        // An IF of the included file is still open at its end.
+        a.line_number = a.if_lines[a.if_depth - 1];
+        a.report("IF without ENDIF", .{});
+        a.if_depth = outer_if_depth;
+        if (a.skip_depth > a.if_depth) a.skip_depth = 0;
+    }
+    a.include_depth -= 1;
+    a.file_name = outer_file;
+    a.line_number = outer_line;
+    a.original = outer_original;
+}
+
+/// INCBIN "name"[, offset[, length]]: bytes of the file, stored like DB.
+fn incbin(a: *Assembler, l: *Line) Error!void {
+    const name = try a.fileName(l);
+    var offset: usize = 0;
+    var length: ?usize = null;
+    if (l.eat(.comma)) offset = try a.incbinValue(l, "offset");
+    if (l.eat(.comma)) length = try a.incbinValue(l, "length");
+    try a.expectEnd(l);
+    const data = a.findFile(name) orelse return a.missingFile(name);
+    if (offset > data.len) return a.fail("INCBIN offset {d} is past the end of '{s}' ({d} bytes)", .{ offset, name, data.len });
+    const count = length orelse data.len - offset;
+    if (count > data.len - offset) return a.fail("INCBIN of {d} bytes at {d} is past the end of '{s}' ({d} bytes)", .{ count, offset, name, data.len });
+    return a.bytes(data[offset..][0..count]);
+}
+
+fn incbinValue(a: *Assembler, l: *Line, comptime what: []const u8) Error!usize {
+    const v = try a.expression(l);
+    if (!v.known) return a.fail("INCBIN " ++ what ++ " is not known here", .{});
+    if (v.value < 0) return a.fail("INCBIN " ++ what ++ " {d} is negative", .{v.value});
+    return @intCast(v.value);
+}
+
 /// A token of the current line as a slice of the caller's text, for names kept
 /// after the line; the token itself points into a temporary copy.
 fn kept(a: *const Assembler, t: Token) []const u8 {
@@ -1497,6 +1647,9 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
             a.ended = true;
         },
         .equ => a.fail("EQU needs a label", .{}),
+        .include => a.include(l),
+        .incbin => a.incbin(l),
+        .output => a.output_name = try a.fileName(l),
         .@"if", .ifdef, .ifndef, .elseif, .@"else", .endif => a.conditional(l, kw),
         .@".area" => {
             const name = l.take();
