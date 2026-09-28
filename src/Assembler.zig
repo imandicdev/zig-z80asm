@@ -1179,8 +1179,9 @@ fn operand(a: *Assembler, l: *Line) Error!Operand {
     // operand; "(2+3)*2" is an immediate.
     const start = l.pos;
     const v = try a.expression(l);
-    // sdas writes (IX+d) as "d (ix)".
-    if (l.peek().tag == .l_paren and l.peekAt(2).tag == .r_paren) { // smell-ok: the ")" after "(" and the register
+    // sdas, the assembler of SDCC, writes (IX+d) as "d (ix)": the
+    // displacement as an expression, then "(", the index register and ")".
+    if (l.peek().tag == .l_paren and l.peekAt(2).tag == .r_paren) { // smell-ok: 2 is the ")" after "(" and the register; only a whole "(ix)" or "(iy)" is that form, so "d (ix+1)" is not read as (IX+d)
         if (register(l.peekAt(1).text)) |r| if (index(r)) |idx| {
             _ = l.take();
             _ = l.take();
