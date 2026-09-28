@@ -1937,7 +1937,10 @@ fn output(a: *Assembler, l: *Line) Error!void {
     if (dst == .mem and src.isReg(.a)) return a.emit(isa.outNA(a.byteOf(dst.mem)));
     if (dst.isMemReg(.c)) {
         if (src == .reg) if (plain(src.reg)) |r| return a.emit(isa.outCR(r));
-        if (src == .imm and src.imm.value == 0) return a.emit(isa.outC0());
+        if (src == .imm) {
+            if (src.imm.known and src.imm.value != 0) a.report("OUT (C) value must be 0", .{});
+            return a.emit(isa.outC0());
+        }
     }
     return a.invalid();
 }

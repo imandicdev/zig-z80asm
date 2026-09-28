@@ -162,6 +162,10 @@ test "an EQU chain defined out of order still resolves" {
     try std.testing.expect(runtime(source).passes >= 3);
 }
 
+test "OUT (C),0 also through a forward reference" {
+    try expectBytes("  OUT (C),zero\nzero EQU 0\n", isa.outC0().slice());
+}
+
 test "a real range error is still reported" {
     try expectDiagnostic("  JR far\n  DS 200\nfar: NOP\n", "line 1: relative jump out of range (200 bytes)");
     try expectDiagnostic("  LD A,big\nbig EQU 300\n", "line 1: value 300 does not fit in 8 bits");

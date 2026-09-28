@@ -27,6 +27,8 @@ pub const cases = [_]Case{
     .{ .name = "displacement_range", .source = "  LD A,(IX+200)\n", .expect = "line 1: index displacement 200 out of range -128..127" },
     .{ .name = "rst_target", .source = "  RST 5\n", .expect = "line 1: RST target must be one of 0x00, 0x08, ..., 0x38" },
     .{ .name = "interrupt_mode", .source = "  IM 3\n", .expect = "line 1: interrupt mode must be 0, 1 or 2" },
+    .{ .name = "out_c_value", .source = "  OUT (C),1\n", .expect = "line 1: OUT (C) value must be 0" },
+    .{ .name = "out_c_value_forward", .source = "  OUT (C),one\none EQU 1\n", .expect = "line 1: OUT (C) value must be 0" },
     .{ .name = "bit_number", .source = "  BIT 8,A\n", .expect = "line 1: bit number 8 out of range 0..7" },
     .{ .name = "division_overflow", .source = "  DW (-2147483647-1)/-1\n", .expect = "line 1: value -2147483648 does not fit in 16 bits" },
     .{ .name = "relative_jump_huge_target", .source = "  JR -2147483647\n", .expect = "line 1: relative jump out of range (-2147483649 bytes)" },
