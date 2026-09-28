@@ -33,6 +33,27 @@ pub fn build(b: *std.Build) void {
     assembler_tests.addImport("z80asm", mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = assembler_tests })).step);
 
+    const formats_tests = b.createModule(.{
+        .root_source_file = b.path("test/formats_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    formats_tests.addImport("z80asm", mod);
+    // The CLI on the same program: the format from the extension or the
+    // machine, and the header name from the output file.
+    const CliFile = struct { import: []const u8, args: []const []const u8, output: []const u8 };
+    for ([_]CliFile{
+        .{ .import = "cli_tap", .args = &.{}, .output = "program.tap" },
+        .{ .import = "cli_amsdos", .args = &.{ "--machine", "cpc" }, .output = "am.cpc" },
+        .{ .import = "cli_cmd", .args = &.{}, .output = "program.cmd" },
+    }) |cli| {
+        const run = b.addRunArtifact(exe);
+        run.addArgs(cli.args);
+        run.addFileArg(b.path("test/formats/program.asm"));
+        formats_tests.addAnonymousImport(cli.import, .{ .root_source_file = run.addOutputFileArg(cli.output) });
+    }
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = formats_tests })).step);
+
     const cases_tests = b.createModule(.{
         .root_source_file = b.path("test/cases_test.zig"),
         .target = target,

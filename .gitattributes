@@ -1,6 +1,7 @@
 # Reference output; a line-ending conversion would change the bytes.
 *.bin binary
 *.dat binary
+test/formats/* binary
 
 # zig fmt wants LF, and the test sources are embedded byte for byte, so a
 # Windows checkout must not turn them into CRLF.
@@ -8,3 +9,4 @@
 *.zon text eol=lf
 *.asm text eol=lf
 *.inc text eol=lf
+test/formats/*.asm text eol=lf

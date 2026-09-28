@@ -13,16 +13,22 @@ const diagnostic_count = 64;
 const max_source_size = 16 << 20;
 
 const usage =
-    \\usage: z80asm [--origin ADDR] [--machine NAME] [-I DIR]... INPUT.asm [OUTPUT]
+    \\usage: z80asm [--origin ADDR] [--machine NAME] [--format NAME] [-I DIR]... INPUT.asm [OUTPUT]
     \\
     \\Writes the memory image from the lowest to the highest address written, as
-    \\the file the machine runs. Without OUTPUT, writes to the file that OUTPUT in
-    \\the source names, next to INPUT.asm.
+    \\the file the machine loads. Without OUTPUT, writes to the file that OUTPUT
+    \\in the source names, next to INPUT.asm.
     \\
     \\  --origin ADDR   address of the first byte when the source has no ORG
-    \\  --machine cpm   CP/M: a .com file at 0x0100
+    \\  --machine NAME  cpm (com at 0x0100), zx48 (tap), cpc (amsdos),
+    \\                  trs80 (cmd) or msx (msx)
+    \\  --format NAME   bin, com, tap, amsdos, cmd or msx
     \\  -I DIR          where to look for INCLUDE and INCBIN files after the
     \\                  directory of the file that names them
+    \\
+    \\The format is the first of: --format, FORMAT in the source, the machine's,
+    \\the output file's extension (.bin, .com, .tap or .cmd), and bin. A tap or
+    \\AMSDOS header without a name takes the output file's name.
     \\
 ;
 
@@ -72,6 +78,11 @@ pub fn main(init: std.process.Init) !void {
             if (i == args.len) std.process.fatal("--machine needs a name", .{});
             options.machine = std.meta.stringToEnum(z80.Machine, args[i]) orelse
                 std.process.fatal("unknown machine '{s}'\n{s}", .{ args[i], usage });
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            i += 1;
+            if (i == args.len) std.process.fatal("--format needs a name", .{});
+            options.format = z80.Format.named(args[i], "") orelse
+                std.process.fatal("unknown format '{s}'\n{s}", .{ args[i], usage });
         } else if (std.mem.eql(u8, arg, "-I")) {
             i += 1;
             if (i == args.len) std.process.fatal("-I needs a directory", .{});
@@ -85,6 +96,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     const input_path = input orelse std.process.fatal("{s}", .{usage});
+    if (output) |path| options.fallback_format = formatOfExtension(path);
 
     const cwd = std.Io.Dir.cwd();
     const source = cwd.readFileAlloc(init.io, input_path, arena, .limited(max_source_size)) catch |err|
@@ -94,10 +106,16 @@ pub fn main(init: std.process.Init) !void {
     var files: Files = .{};
     var result = z80.assemble(source, options, workspace.buffers());
     // Each round reads what the last one reported missing; an included file can
-    // name further files, one level more each round.
+    // name further files, one level more each round. The extension of the file
+    // that OUTPUT names is known after the first round, and can change the
+    // format.
     var not_found: ?z80.Missing = null;
     var round: usize = 0;
-    while (result.missing.len > 0 and round < z80.Assembler.max_include_depth) : (round += 1) {
+    while (round < z80.Assembler.max_include_depth) : (round += 1) {
+        const named = if (output == null) if (result.output_name) |name| formatOfExtension(name) else null else null;
+        const new_format = options.fallback_format == null and named != null;
+        if (result.missing.len == 0 and !new_format) break;
+        if (new_format) options.fallback_format = named;
         for (result.missing) |m| {
             if (files.has(m.name)) continue;
             const from = files.pathOf(m.from, input_path);
@@ -136,10 +154,47 @@ pub fn main(init: std.process.Init) !void {
     else
         std.process.fatal("no output file: give one after {s}, or name one with OUTPUT in the source", .{input_path});
 
-    const file = try arena.alloc(u8, z80.formats.fileLen(result.format, result.bytes.len));
-    const data = z80.formats.write(result.format, result.image(), file);
+    const format = try withName(arena, result.format, output_path);
+    const file = try arena.alloc(u8, z80.formats.fileLen(format, result.bytes.len));
+    const data = z80.formats.write(format, result.image(), file);
     cwd.writeFile(init.io, .{ .sub_path = output_path, .data = data }) catch |err|
         std.process.fatal("cannot write '{s}': {t}", .{ output_path, err });
+}
+
+/// The format that the extension of `path` names. AMSDOS and BLOAD files have
+/// no extension of their own.
+fn formatOfExtension(path: []const u8) ?z80.Format {
+    const extension = std.fs.path.extension(path);
+    if (extension.len == 0) return null;
+    const format = z80.Format.named(extension[1..], "") orelse return null;
+    return switch (format) {
+        .bin, .com, .tap, .cmd => format,
+        .amsdos, .msx => null,
+    };
+}
+
+/// `format`, with the name of `path` in a header that has an empty one, cut to
+/// fit the header.
+fn withName(arena: std.mem.Allocator, format: z80.Format, path: []const u8) !z80.Format {
+    const base = std.fs.path.basename(path);
+    var named = format;
+    switch (named) {
+        .tap => |*n| if (n.name.len == 0) {
+            const stem = std.fs.path.stem(base);
+            n.name = stem[0..@min(stem.len, z80.formats.tap_name_len)];
+        },
+        .amsdos => |*n| if (n.name.len == 0) {
+            const dot = std.mem.indexOfScalar(u8, base, '.') orelse base.len;
+            const name = base[0..@min(dot, z80.formats.amsdos_name_len)];
+            const extension = std.fs.path.extension(base);
+            n.name = if (extension.len > 1)
+                try std.fmt.allocPrint(arena, "{s}.{s}", .{ name, extension[1..@min(extension.len, 1 + z80.formats.amsdos_ext_len)] })
+            else
+                name;
+        },
+        else => {},
+    }
+    return named;
 }
 
 /// `name` with a backslash read as a slash, which works as a separator

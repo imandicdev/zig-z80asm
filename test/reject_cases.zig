@@ -78,5 +78,12 @@ pub const cases = [_]Case{
     .{ .name = "include_cycle", .options = ".{ .files = &.{.{ .name = \"a.asm\", .data = \"  INCLUDE \\\"a.asm\\\"\\n\" }} }", .source = "  INCLUDE \"a.asm\"\n", .expect = "a.asm:1: 'a.asm' includes itself" },
     .{ .name = "if_open_at_end_of_include", .options = ".{ .files = &.{.{ .name = \"i.asm\", .data = \"  IF 1\\n  NOP\\n\" }} }", .source = "  INCLUDE \"i.asm\"\n", .expect = "i.asm:1: IF without ENDIF" },
     .{ .name = "incbin_past_the_end", .options = ".{ .files = &.{.{ .name = \"d.dat\", .data = \"abcd\" }} }", .source = "  INCBIN \"d.dat\", 2, 5\n", .expect = "line 1: INCBIN of 5 bytes at 2 is past the end of 'd.dat' (4 bytes)" },
+    .{ .name = "unknown_format", .source = "  FORMAT xyz\n", .expect = "line 1: unknown format 'xyz'" },
+    .{ .name = "format_without_name", .source = "  FORMAT 5\n", .expect = "line 1: expected a format name, found '5'" },
+    .{ .name = "title_of_a_format_without_one", .source = "  FORMAT cmd, \"x\"\n", .expect = "line 1: the cmd format has no name" },
+    .{ .name = "tap_name_too_long", .source = "  FORMAT tap, \"elevenchars\"\n  NOP\n", .expect = "a tap name has at most 10 characters, not 'elevenchars'" },
+    .{ .name = "tap_too_long", .source = "  FORMAT tap\n  ORG 0\n  DS 0FFFEh\n", .expect = "the tap format holds at most 65533 bytes, not 65534" },
+    .{ .name = "amsdos_too_long", .source = "  FORMAT amsdos\n  ORG 0\n  DS 10000h\n", .expect = "the amsdos format holds at most 65535 bytes, not 65536" },
+    .{ .name = "amsdos_name_too_long", .source = "  FORMAT amsdos, \"toolongname.bin\"\n  NOP\n", .expect = "an AMSDOS name has at most 8 characters, a dot and 3 more, not 'toolongname.bin'" },
     .{ .name = "garbage_after_many_values", .source = "  DW " ++ "1," ** 100 ++ "2 3\n", .expect = "line 1: unexpected '3'" },
 };

@@ -60,20 +60,20 @@ pub const Options = struct {
     /// Address of the first byte when the source does not start with ORG;
     /// without it, the machine's origin, or 0.
     origin: ?u16 = null,
-    /// A preset of the output format and the default origin.
+    /// A preset of the output format (and, for cpm, of the default origin).
     machine: ?Machine = null,
-    /// The output format; without it, the machine's, or bin.
+    /// The output format. It wins over FORMAT in the source, which wins over
+    /// the machine's.
     format: ?formats.Format = null,
+    /// The format when neither `format`, FORMAT nor the machine gives one; the
+    /// command-line tool takes it from the output file's extension.
+    fallback_format: ?formats.Format = null,
     /// The files INCLUDE and INCBIN can name, found by the exact name in the
     /// directive, with \ read as /.
     files: []const File = &.{},
 
     fn defaultOrigin(o: Options) u16 {
-        return o.origin orelse if (o.machine) |m| m.origin() else 0;
-    }
-
-    fn outputFormat(o: Options) formats.Format {
-        return o.format orelse if (o.machine) |m| m.format() else .bin;
+        return o.origin orelse if (o.machine) |m| m.origin() orelse 0 else 0;
     }
 };
 
@@ -197,6 +197,8 @@ line_number: u32 = 0,
 ended: bool = false,
 /// The operand of END.
 entry: ?u16 = null,
+/// Set by FORMAT.
+source_format: ?formats.Format = null,
 /// Open IF blocks, and the depth of the one whose branch is being skipped (0
 /// while lines are assembled). Bit d-1 of if_taken and if_else is for depth d:
 /// a branch of that block was assembled, and its ELSE was seen.
@@ -278,9 +280,25 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
             break;
         }
     }
-    const format = options.outputFormat();
+    // Branches rather than a chain of orelse, which at comptime gives a value
+    // that is no longer optional as soon as one of them is known.
+    const given: ?formats.Format = if (options.format) |f| f else a.source_format;
+    const preset: ?formats.Format = if (options.machine) |m| m.format() else options.fallback_format;
+    const format: formats.Format = if (given) |f| f else if (preset) |f| f else .bin;
     if (formats.requiredOrigin(format)) |origin| {
         if (!a.empty and a.low != origin) a.report("the {t} format needs origin 0x{X:0>4}, not 0x{X:0>4}", .{ format, origin, a.low });
+    }
+    if (formats.maxLen(format)) |max| {
+        if (a.high - a.low > max) a.report("the {t} format holds at most {d} bytes, not {d}", .{ format, max, a.high - a.low });
+    }
+    switch (format) {
+        .tap => |n| if (n.name.len > formats.tap_name_len) {
+            a.report("a tap name has at most {d} characters, not '{s}'", .{ formats.tap_name_len, n.name });
+        },
+        .amsdos => |n| if (!formats.validAmsdosName(n.name)) {
+            a.report("an AMSDOS name has at most {d} characters, a dot and {d} more, not '{s}'", .{ formats.amsdos_name_len, formats.amsdos_ext_len, n.name });
+        },
+        else => {},
     }
     return .{
         .origin = if (a.empty) a.default_origin else @intCast(a.low),
@@ -381,6 +399,7 @@ fn beginPass(a: *Assembler) void {
     a.statement_pc = a.pc;
     a.ended = false;
     a.entry = null;
+    a.source_format = null;
     a.if_depth = 0;
     a.skip_depth = 0;
     a.if_taken = 0;
@@ -1280,6 +1299,7 @@ const Keyword = enum {
     include,
     incbin,
     output,
+    format,
     @"if",
     ifdef,
     ifndef,
@@ -1517,6 +1537,17 @@ fn missingFile(a: *Assembler, name: []const u8) Error {
     return a.fail("file '{s}' is not in the file table", .{name});
 }
 
+/// FORMAT name[, "title"]: the output format, unless the options give one.
+/// The title is the name in the header of a tap or amsdos file.
+fn formatDirective(a: *Assembler, l: *Line) Error!void {
+    const t = l.take();
+    if (t.tag != .identifier) return a.fail("expected a format name, found '{s}'", .{t.text});
+    const title = if (l.eat(.comma)) try a.fileName(l) else "";
+    const format = formats.Format.named(t.text, title) orelse return a.fail("unknown format '{s}'", .{t.text});
+    if (title.len != 0 and format.headerName() == null) return a.fail("the {t} format has no name", .{format});
+    a.source_format = format;
+}
+
 /// INCLUDE "name": the lines of the file, assembled here.
 fn include(a: *Assembler, l: *Line) Error!void {
     const name = try a.fileName(l);
@@ -1650,6 +1681,7 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
         .include => a.include(l),
         .incbin => a.incbin(l),
         .output => a.output_name = try a.fileName(l),
+        .format => a.formatDirective(l),
         .@"if", .ifdef, .ifndef, .elseif, .@"else", .endif => a.conditional(l, kw),
         .@".area" => {
             const name = l.take();

@@ -393,3 +393,23 @@ test "INCBIN takes its offset from a later pass when it is a forward reference" 
     try expectOk(r);
     try std.testing.expectEqualSlices(u8, "d", r.bytes);
 }
+
+test "the format: the option, then FORMAT, then the machine, then the fallback" {
+    const with_format = "  FORMAT tap, \"game\"\n  NOP\n";
+    const from_source = z80.assemble(with_format, .{ .machine = .cpc, .fallback_format = .cmd }, workspace.buffers());
+    try expectOk(from_source);
+    try std.testing.expectEqualStrings("game", from_source.format.tap.name);
+    try std.testing.expect(z80.assemble(with_format, .{ .format = .msx }, workspace.buffers()).format == .msx);
+    try std.testing.expect(z80.assemble("  NOP\n", .{ .machine = .trs80, .fallback_format = .msx }, workspace.buffers()).format == .cmd);
+    try std.testing.expect(z80.assemble("  NOP\n", .{ .fallback_format = .msx }, workspace.buffers()).format == .msx);
+    try std.testing.expect(z80.assemble("  NOP\n", .{}, workspace.buffers()).format == .bin);
+}
+
+test "each machine has its format, and only cpm an origin" {
+    inline for (.{ .{ z80.Machine.zx48, z80.Format.Tag.tap }, .{ z80.Machine.cpc, z80.Format.Tag.amsdos }, .{ z80.Machine.trs80, z80.Format.Tag.cmd }, .{ z80.Machine.msx, z80.Format.Tag.msx } }) |case| {
+        const r = z80.assemble("  NOP\n", .{ .machine = case[0] }, workspace.buffers());
+        try expectOk(r);
+        try std.testing.expectEqual(case[1], std.meta.activeTag(r.format));
+        try std.testing.expectEqual(0, r.origin);
+    }
+}
