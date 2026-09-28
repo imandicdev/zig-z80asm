@@ -648,18 +648,26 @@ fn outside(v: Value, min: i32, max: i32) bool {
     return v.known and (v.value < min or v.value > max);
 }
 
-/// Out of range: reported, and the low 8 bits are used, as in wordOf and
-/// bitOf. displacementOf differs on purpose. Both keep the instruction size,
-/// and the tool and comptimeAssemble never write the bytes of a result with
+/// The low bits of `v` as a `T`. Out of range, below `min` or above the
+/// largest `T`: `message` is reported, and the low bits are used all the same.
+/// displacementOf differs on purpose. Both keep the instruction size, and the
+/// tool and comptimeAssemble never write the bytes of a result with
 /// diagnostics.
-fn byteOf(a: *Assembler, v: Value) u8 {
-    if (outside(v, std.math.minInt(i8), std.math.maxInt(u8))) a.report("value {d} does not fit in 8 bits", .{v.value});
+fn lowBits(a: *Assembler, comptime T: type, v: Value, min: i32, comptime message: []const u8) T {
+    if (outside(v, min, std.math.maxInt(T))) a.report(message, .{v.value});
     return @truncate(@as(u32, @bitCast(v.value)));
 }
 
+fn byteOf(a: *Assembler, v: Value) u8 {
+    return a.lowBits(u8, v, std.math.minInt(i8), "value {d} does not fit in 8 bits");
+}
+
 fn wordOf(a: *Assembler, v: Value) u16 {
-    if (outside(v, std.math.minInt(i16), std.math.maxInt(u16))) a.report("value {d} does not fit in 16 bits", .{v.value});
-    return @truncate(@as(u32, @bitCast(v.value)));
+    return a.lowBits(u16, v, std.math.minInt(i16), "value {d} does not fit in 16 bits");
+}
+
+fn bitOf(a: *Assembler, v: Value) u3 {
+    return a.lowBits(u3, v, 0, "bit number {d} out of range 0..7");
 }
 
 /// Out of range: reported, and 0 is used instead of the low 8 bits, on
@@ -685,11 +693,6 @@ fn relativeOf(a: *Assembler, target: Value) i8 {
         a.report("relative jump out of range ({d} bytes)", .{offset});
         return 0;
     };
-}
-
-fn bitOf(a: *Assembler, v: Value) u3 {
-    if (outside(v, 0, std.math.maxInt(u3))) a.report("bit number {d} out of range 0..7", .{v.value});
-    return @truncate(@as(u32, @bitCast(v.value)));
 }
 
 /// The tokens of one line. When a line has more tokens than fit, `tokens`
