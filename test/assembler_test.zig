@@ -31,6 +31,21 @@ fn expectDiagnostic(source: []const u8, expected: []const u8) !void {
     try std.testing.expectEqualStrings(expected, try std.fmt.bufPrint(&buf, "{f}", .{r.diagnostics[0]}));
 }
 
+test "a message longer than its buffer is cut at the end of the buffer, with nothing of an earlier one" {
+    const capacity = Assembler.message_capacity;
+    const prefix = "unknown instruction '";
+    // The first diagnostic slot first holds a long message of x's.
+    _ = runtime("  " ++ "x" ** 200 ++ "\n");
+    // Cut inside the name, and at the closing quote.
+    inline for (.{ 200, capacity - prefix.len }) |len| {
+        const name = "y" ** len;
+        const r = runtime("  " ++ name ++ "\n");
+        try std.testing.expect(r.diagnostics.len > 0);
+        const full = prefix ++ name ++ "'";
+        try std.testing.expectEqualStrings(full[0..capacity], r.diagnostics[0].message());
+    }
+}
+
 test "lines longer than the read buffer and labels used across buffer refills" {
     const long = "x" ** 5000;
     const source = "first: NOP\n; " ++ long ++ "\n" ++ ("  NOP ; filler\n" ** 400) ++

@@ -26,6 +26,7 @@ pub const cases = [_]Case{
     .{ .name = "jr_condition", .source = "x: JR PO,x\n", .expect = "line 1: JR supports only NZ, Z, NC and C" },
     .{ .name = "displacement_range", .source = "  LD A,(IX+200)\n", .expect = "line 1: index displacement 200 out of range -128..127" },
     .{ .name = "rst_target", .source = "  RST 5\n", .expect = "line 1: RST target must be one of 0x00, 0x08, ..., 0x38" },
+    .{ .name = "message_cut", .source = "  " ++ "y" ** 200 ++ "\n", .expect = "line 1: unknown instruction '" ++ "y" ** 99 },
     .{ .name = "interrupt_mode", .source = "  IM 3\n", .expect = "line 1: interrupt mode must be 0, 1 or 2" },
     .{ .name = "out_c_value", .source = "  OUT (C),1\n", .expect = "line 1: OUT (C) value must be 0" },
     .{ .name = "out_c_value_forward", .source = "  OUT (C),one\none EQU 1\n", .expect = "line 1: OUT (C) value must be 0" },
