@@ -61,5 +61,6 @@ pub const cases = [_]Case{
     .{ .name = "data_value_too_long", .source = "  DB 1," ++ "1+" ** 40 ++ "1,2\n", .expect = "line 1: value has more than 62 tokens" },
     .{ .name = "stray_character_after_many_values", .source = "  DB " ++ "1," ** 100 ++ "@\n", .expect = "line 1: unexpected character '@'" },
     .{ .name = "com_origin", .options = ".{ .machine = .cpm }", .source = "  ORG 8000h\n  NOP\n", .expect = "the com format needs origin 0x0100, not 0x8000" },
+    .{ .name = "single_equal_is_not_equality", .source = "  DB 1 = 1\n", .expect = "line 1: unexpected '='" },
     .{ .name = "garbage_after_many_values", .source = "  DW " ++ "1," ** 100 ++ "2 3\n", .expect = "line 1: unexpected '3'" },
 };

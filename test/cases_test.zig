@@ -4,7 +4,7 @@
 const std = @import("std");
 const z80 = @import("z80asm");
 
-const names = .{ "numbers", "expressions", "labels", "data", "long_data", "end", "end_entry", "regressions", "cpm_hello" };
+const names = .{ "numbers", "expressions", "labels", "data", "long_data", "end", "end_entry", "regressions", "cpm_hello", "operators" };
 
 var workspace: z80.Workspace(0x10000, 256, 16) = undefined;
 

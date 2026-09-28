@@ -290,3 +290,13 @@ test "an explicit origin or format overrides the machine" {
     var buf: [100]u8 = undefined;
     try std.testing.expectEqualStrings("the com format needs origin 0x0100, not 0x8000", try std.fmt.bufPrint(&buf, "{f}", .{bad.diagnostics[0]}));
 }
+
+test "SDCC's #< and #> stay the low and high byte where an operand is expected" {
+    try expectBytes(
+        \\  LD A,#<1234h
+        \\  LD A,#>1234h
+        \\  LD A,1 < #>1234h
+        \\  LD A,#>1234h > 1
+        \\
+    , &.{ 0x3E, 0x34, 0x3E, 0x12, 0x3E, 0xFF, 0x3E, 0xFF });
+}

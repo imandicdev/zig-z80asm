@@ -666,39 +666,59 @@ fn expect(a: *Assembler, l: *Line, tag: Token.Tag, what: []const u8) Error!void 
     return a.fail("expected {s}, found '{s}'", .{ what, l.peek().text });
 }
 
-const Operator = enum { @"or", xor, @"and", shl, shr, add, sub, mul, div, mod };
+const Operator = enum { logical_or, logical_and, @"or", xor, @"and", eq, ne, lt, gt, le, ge, shl, shr, add, sub, mul, div, mod };
+
+/// How tightly the binary operators bind, loosest first, as in sjasmplus.
+const Precedence = enum(u8) { logical_or = 1, logical_and, bit_or, bit_xor, bit_and, equality, comparison, shift, additive, multiplicative };
+
+/// The value of a true comparison or logical operator, as in sjasmplus: all
+/// bits set, so that it can be used as a mask.
+const true_value: i32 = -1;
 
 // A switch rather than a std.EnumArray constant, which made the Spectrum ROM
-// 0.5 s slower at comptime. A higher precedence binds tighter.
-fn binaryOperator(tag: Token.Tag) ?struct { op: Operator, precedence: u8 } {
+// 0.5 s slower at comptime.
+fn binaryOperator(tag: Token.Tag) ?struct { op: Operator, precedence: Precedence } {
     return switch (tag) {
-        .pipe => .{ .op = .@"or", .precedence = 1 },
-        .caret => .{ .op = .xor, .precedence = 2 }, // smell-ok: precedence level
-        .ampersand => .{ .op = .@"and", .precedence = 3 }, // smell-ok: precedence level
-        .shift_left => .{ .op = .shl, .precedence = 4 }, // smell-ok: precedence level
-        .shift_right => .{ .op = .shr, .precedence = 4 }, // smell-ok: precedence level
-        .plus => .{ .op = .add, .precedence = 5 }, // smell-ok: precedence level
-        .minus => .{ .op = .sub, .precedence = 5 }, // smell-ok: precedence level
-        .asterisk => .{ .op = .mul, .precedence = 6 }, // smell-ok: precedence level
-        .slash => .{ .op = .div, .precedence = 6 }, // smell-ok: precedence level
-        .percent => .{ .op = .mod, .precedence = 6 }, // smell-ok: precedence level
+        .pipe_pipe => .{ .op = .logical_or, .precedence = .logical_or },
+        .ampersand_ampersand => .{ .op = .logical_and, .precedence = .logical_and },
+        .pipe => .{ .op = .@"or", .precedence = .bit_or },
+        .caret => .{ .op = .xor, .precedence = .bit_xor },
+        .ampersand => .{ .op = .@"and", .precedence = .bit_and },
+        .equal_equal => .{ .op = .eq, .precedence = .equality },
+        .bang_equal => .{ .op = .ne, .precedence = .equality },
+        .less => .{ .op = .lt, .precedence = .comparison },
+        .greater => .{ .op = .gt, .precedence = .comparison },
+        .less_equal => .{ .op = .le, .precedence = .comparison },
+        .greater_equal => .{ .op = .ge, .precedence = .comparison },
+        .shift_left => .{ .op = .shl, .precedence = .shift },
+        .shift_right => .{ .op = .shr, .precedence = .shift },
+        .plus => .{ .op = .add, .precedence = .additive },
+        .minus => .{ .op = .sub, .precedence = .additive },
+        .asterisk => .{ .op = .mul, .precedence = .multiplicative },
+        .slash => .{ .op = .div, .precedence = .multiplicative },
+        .percent => .{ .op = .mod, .precedence = .multiplicative },
         else => null,
     };
 }
 
 fn expression(a: *Assembler, l: *Line) Error!Value {
-    return a.binary(l, 1);
+    return a.binary(l, @intFromEnum(Precedence.logical_or));
 }
 
 fn binary(a: *Assembler, l: *Line, min_precedence: u8) Error!Value {
     var lhs = try a.unary(l);
     while (binaryOperator(l.peek().tag)) |bin| {
-        if (bin.precedence < min_precedence) break;
+        const precedence = @intFromEnum(bin.precedence);
+        if (precedence < min_precedence) break;
         _ = l.take();
-        const rhs = try a.binary(l, bin.precedence + 1);
+        const rhs = try a.binary(l, precedence + 1);
         lhs = a.apply(bin.op, lhs, rhs);
     }
     return lhs;
+}
+
+fn truth(holds: bool) i32 {
+    return if (holds) true_value else 0;
 }
 
 fn apply(a: *Assembler, op: Operator, lhs: Value, rhs: Value) Value {
@@ -706,6 +726,14 @@ fn apply(a: *Assembler, op: Operator, lhs: Value, rhs: Value) Value {
     const y = rhs.value;
     const known = lhs.known and rhs.known;
     const v: i32 = switch (op) {
+        .logical_or => truth(x != 0 or y != 0),
+        .logical_and => truth(x != 0 and y != 0),
+        .eq => truth(x == y),
+        .ne => truth(x != y),
+        .lt => truth(x < y),
+        .gt => truth(x > y),
+        .le => truth(x <= y),
+        .ge => truth(x >= y),
         .@"or" => x | y,
         .xor => x ^ y,
         .@"and" => x & y,
@@ -744,6 +772,10 @@ fn unary(a: *Assembler, l: *Line) Error!Value {
     if (l.eat(.tilde)) {
         const v = try a.unary(l);
         return .{ .value = ~v.value, .known = v.known };
+    }
+    if (l.eat(.bang)) {
+        const v = try a.unary(l);
+        return .{ .value = truth(v.value == 0), .known = v.known };
     }
     // sdas: #<x and #>x are the low and high byte of x.
     if (l.eat(.less)) {
