@@ -887,6 +887,10 @@ fn apply(a: *Assembler, op: Operator, lhs: Value, rhs: Value) Value {
         .@"or" => x | y,
         .xor => x ^ y,
         .@"and" => x & y,
+        // A count outside 0..31 gives 0. sjasmplus reports nothing there, and
+        // gives what the x86 shift instruction does with the count mod 32
+        // (1 << 32 is 1, -1 >> 40 is -1): in its C++ source that shift is
+        // undefined, so it is no rule of sjasmplus to follow.
         .shl => if (std.math.cast(u5, y)) |n| x << n else 0,
         .shr => if (std.math.cast(u5, y)) |n| x >> n else 0,
         .add => x +% y,
