@@ -1,6 +1,11 @@
 //! Splits one source line into tokens. Problems such as a stray character or
-//! an unterminated string come back as `.invalid` / `.unterminated_string`
-//! tokens so the assembler can report them like any other error.
+//! an unterminated string come back as `.invalid` tokens so the assembler can
+//! report them like any other error.
+//!
+//! Every tag of Token.Tag costs compiler memory when the assembler runs at
+//! comptime (one more tag made the Spectrum ROM take 8 MB more), so tokens
+//! that the text tells apart share a tag: `:` and `::`, the two-character
+//! operators, and a stray character and an unterminated string.
 //!
 //! '%' is always `.percent`: whether it is modulo or a binary prefix ("%1010")
 //! depends on where the expression parser meets it.
@@ -25,8 +30,8 @@ pub const Token = struct {
         l_paren,
         r_paren,
         comma,
+        /// `:` or `::`.
         colon,
-        double_colon,
         plus,
         minus,
         asterisk,
@@ -36,23 +41,19 @@ pub const Token = struct {
         pipe,
         caret,
         tilde,
-        bang,
         shift_left,
         shift_right,
         less,
         greater,
-        less_equal,
-        greater_equal,
         equal,
-        equal_equal,
-        bang_equal,
-        ampersand_ampersand,
-        pipe_pipe,
+        /// == != <= >= && || and !.
+        operator,
         hash,
         dollar,
         end,
+        /// A stray character, or a string without its closing quote (the text
+        /// starts with the quote).
         invalid,
-        unterminated_string,
     };
 };
 
@@ -80,16 +81,22 @@ pub fn next(l: *Lexer) Token {
         '-' => .minus,
         '*' => .asterisk,
         '/' => .slash,
-        '&' => if (l.eat('&')) .ampersand_ampersand else .ampersand,
-        '|' => if (l.eat('|')) .pipe_pipe else .pipe,
+        '&' => if (l.eat('&')) .operator else .ampersand,
+        '|' => if (l.eat('|')) .operator else .pipe,
         '^' => .caret,
         '~' => .tilde,
-        '!' => if (l.eat('=')) .bang_equal else .bang,
-        '=' => if (l.eat('=')) .equal_equal else .equal,
+        '!' => blk: {
+            _ = l.eat('=');
+            break :blk .operator;
+        },
+        '=' => if (l.eat('=')) .operator else .equal,
         '#' => .hash,
-        ':' => if (l.eat(':')) .double_colon else .colon,
-        '<' => if (l.eat('<')) .shift_left else if (l.eat('=')) .less_equal else .less,
-        '>' => if (l.eat('>')) .shift_right else if (l.eat('=')) .greater_equal else .greater,
+        ':' => blk: {
+            _ = l.eat(':');
+            break :blk .colon;
+        },
+        '<' => if (l.eat('<')) .shift_left else if (l.eat('=')) .operator else .less,
+        '>' => if (l.eat('>')) .shift_right else if (l.eat('=')) .operator else .greater,
         '"', '\'' => return l.string(c, start),
         '$' => if (l.pos < l.src.len and std.ascii.isHex(l.src[l.pos])) return l.number(start) else .dollar,
         '%' => .percent,
@@ -151,7 +158,7 @@ fn string(l: *Lexer, quote: u8, start: usize) Token {
         }
     }
     l.pos = l.src.len;
-    return l.token(.unterminated_string, start);
+    return l.token(.invalid, start);
 }
 
 fn isIdentStart(c: u8) bool {
@@ -200,14 +207,14 @@ test "SDCC local labels, AF' and strings" {
     const s = l.next();
     try std.testing.expectEqual(.string, s.tag);
     try std.testing.expectEqualStrings("\"a;b\"", s.text);
-    try std.testing.expectEqual(.unterminated_string, l.next().tag);
+    try std.testing.expectEqual(.invalid, l.next().tag);
 }
 
 test "escaped and doubled quotes do not end a string" {
     var l = init("\"a\\\"b\" 'it''s' \"x\\\"");
     try std.testing.expectEqualStrings("\"a\\\"b\"", l.next().text);
     try std.testing.expectEqualStrings("'it''s'", l.next().text);
-    try std.testing.expectEqual(.unterminated_string, l.next().tag);
+    try std.testing.expectEqual(.invalid, l.next().tag);
 }
 
 test "comment ends the line and stray characters are invalid" {

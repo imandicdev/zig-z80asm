@@ -666,8 +666,10 @@ fn lex(a: *Assembler, l: *Line) Error!void {
     while (true) {
         const t = l.lexer.next();
         switch (t.tag) {
-            .invalid => return a.fail("unexpected character '{s}'", .{t.text}),
-            .unterminated_string => return a.fail("unterminated string", .{}),
+            .invalid => {
+                if (t.text[0] == '"' or t.text[0] == '\'') return a.fail("unterminated string", .{});
+                return a.fail("unexpected character '{s}'", .{t.text});
+            },
             else => {},
         }
         if (l.len == max_line_tokens - 1 and t.tag != .end) {
@@ -722,21 +724,17 @@ const Precedence = enum(u8) { logical_or = 1, logical_and, bit_or, bit_xor, bit_
 /// bits set, so that it can be used as a mask.
 const true_value: i32 = -1;
 
+const BinaryOperator = struct { op: Operator, precedence: Precedence };
+
 // A switch rather than a std.EnumArray constant, which made the Spectrum ROM
 // 0.5 s slower at comptime.
-fn binaryOperator(tag: Token.Tag) ?struct { op: Operator, precedence: Precedence } {
+fn binaryOperator(tag: Token.Tag) ?BinaryOperator {
     return switch (tag) {
-        .pipe_pipe => .{ .op = .logical_or, .precedence = .logical_or },
-        .ampersand_ampersand => .{ .op = .logical_and, .precedence = .logical_and },
         .pipe => .{ .op = .@"or", .precedence = .bit_or },
         .caret => .{ .op = .xor, .precedence = .bit_xor },
         .ampersand => .{ .op = .@"and", .precedence = .bit_and },
-        .equal_equal => .{ .op = .eq, .precedence = .equality },
-        .bang_equal => .{ .op = .ne, .precedence = .equality },
         .less => .{ .op = .lt, .precedence = .comparison },
         .greater => .{ .op = .gt, .precedence = .comparison },
-        .less_equal => .{ .op = .le, .precedence = .comparison },
-        .greater_equal => .{ .op = .ge, .precedence = .comparison },
         .shift_left => .{ .op = .shl, .precedence = .shift },
         .shift_right => .{ .op = .shr, .precedence = .shift },
         .plus => .{ .op = .add, .precedence = .additive },
@@ -748,13 +746,30 @@ fn binaryOperator(tag: Token.Tag) ?struct { op: Operator, precedence: Precedence
     };
 }
 
+/// The two-character operators, which the lexer gives as `.operator`. `!`
+/// alone is unary and gives null.
+fn pairOperator(text: []const u8) ?BinaryOperator {
+    if (text.len == 1) return null; // !
+    return switch (text[0]) {
+        '|' => .{ .op = .logical_or, .precedence = .logical_or },
+        '&' => .{ .op = .logical_and, .precedence = .logical_and },
+        '=' => .{ .op = .eq, .precedence = .equality },
+        '!' => .{ .op = .ne, .precedence = .equality },
+        '<' => .{ .op = .le, .precedence = .comparison },
+        '>' => .{ .op = .ge, .precedence = .comparison },
+        else => null,
+    };
+}
+
 fn expression(a: *Assembler, l: *Line) Error!Value {
     return a.binary(l, @intFromEnum(Precedence.logical_or));
 }
 
 fn binary(a: *Assembler, l: *Line, min_precedence: u8) Error!Value {
     var lhs = try a.unary(l);
-    while (binaryOperator(l.peek().tag)) |bin| {
+    while (true) {
+        const t = l.peek();
+        const bin = (if (t.tag == .operator) pairOperator(t.text) else binaryOperator(t.tag)) orelse break;
         const precedence = @intFromEnum(bin.precedence);
         if (precedence < min_precedence) break;
         _ = l.take();
@@ -803,37 +818,35 @@ fn apply(a: *Assembler, op: Operator, lhs: Value, rhs: Value) Value {
 }
 
 fn unary(a: *Assembler, l: *Line) Error!Value {
-    if (l.eat(.minus)) {
-        const v = try a.unary(l);
-        return .{ .value = -%v.value, .known = v.known };
+    const op = l.peek().tag;
+    switch (op) {
+        .hash => {
+            const hash = l.take();
+            if (try a.hashHex(hash, l.peek())) |v| {
+                _ = l.take();
+                return v;
+            }
+            return a.unary(l);
+        },
+        .minus, .plus, .tilde, .less, .greater => {},
+        .operator => if (l.peek().text.len != 1) return a.primary(l), // only ! is unary
+        else => return a.primary(l),
     }
-    if (l.eat(.plus)) return a.unary(l);
-    if (l.peek().tag == .hash) {
-        const hash = l.take();
-        if (try a.hashHex(hash, l.peek())) |v| {
-            _ = l.take();
-            return v;
-        }
-        return a.unary(l);
-    }
-    if (l.eat(.tilde)) {
-        const v = try a.unary(l);
-        return .{ .value = ~v.value, .known = v.known };
-    }
-    if (l.eat(.bang)) {
-        const v = try a.unary(l);
-        return .{ .value = truth(v.value == 0), .known = v.known };
-    }
-    // sdas: #<x and #>x are the low and high byte of x.
-    if (l.eat(.less)) {
-        const v = try a.unary(l);
-        return .{ .value = v.value & 0xFF, .known = v.known };
-    }
-    if (l.eat(.greater)) {
-        const v = try a.unary(l);
-        return .{ .value = (v.value >> 8) & 0xFF, .known = v.known };
-    }
-    return a.primary(l);
+    _ = l.take();
+    const v = try a.unary(l);
+    return .{
+        .value = switch (op) {
+            .minus => -%v.value,
+            .plus => v.value,
+            .tilde => ~v.value,
+            .operator => truth(v.value == 0), // !
+            // sdas: #<x and #>x are the low and high byte of x.
+            .less => v.value & 0xFF,
+            .greater => (v.value >> 8) & 0xFF,
+            else => unreachable, // the switch above returned for the other tokens
+        },
+        .known = v.known,
+    };
 }
 
 fn primary(a: *Assembler, l: *Line) Error!Value {
@@ -1249,7 +1262,7 @@ fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!voi
     const first = l.peek();
     if (first.tag == .identifier) {
         const next = l.peekAt(1).tag;
-        if (next == .colon or next == .double_colon) {
+        if (next == .colon) {
             name = a.kept(first);
             _ = l.take();
             _ = l.take();
@@ -1261,9 +1274,6 @@ fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!voi
 
     if (name) |n| {
         const t = l.peek();
-        if (t.tag == .identifier) if (keyword(t.text)) |k| if (isConditional(k)) {
-            return a.fail("label '{s}' on a line with {s}", .{ n, t.text });
-        };
         if (t.tag == .equal or (t.tag == .identifier and keyword(t.text) == .equ)) {
             _ = l.take();
             try a.expectFits(&l);
@@ -1290,7 +1300,7 @@ fn skipLine(a: *Assembler, text: []const u8) bool {
     var lexer: Lexer = .init(text);
     var directive = lexer.next();
     const after = lexer.next();
-    if (directive.tag == .identifier and (after.tag == .colon or after.tag == .double_colon)) {
+    if (directive.tag == .identifier and after.tag == .colon) {
         directive = lexer.next();
     } else if (directive.tag == .identifier and directive.col == 0 and keyword(directive.text) == null) {
         directive = after;
@@ -1310,13 +1320,6 @@ fn skipLine(a: *Assembler, text: []const u8) bool {
         else => {},
     }
     return true;
-}
-
-fn isConditional(kw: Keyword) bool {
-    return switch (kw) {
-        .@"if", .ifdef, .ifndef, .elseif, .@"else", .endif => true,
-        else => false,
-    };
 }
 
 fn ifBit(a: *const Assembler) u32 {
@@ -1361,6 +1364,9 @@ fn ifCondition(a: *Assembler, l: *Line, kw: Keyword) Error!bool {
 }
 
 fn conditional(a: *Assembler, l: *Line, kw: Keyword) Error!void {
+    // Tokens before the directive are a label. Checked here rather than for
+    // every labeled line, which cost compiler memory at comptime.
+    if (l.pos > 1) return a.fail("label '{s}' on a line with {s}", .{ l.tokens[0].text, l.tokens[l.pos - 1].text });
     switch (kw) {
         .@"if", .ifdef, .ifndef => {
             if (a.if_depth == max_if_depth) return a.fail("IF nested more than {d} deep", .{max_if_depth});
