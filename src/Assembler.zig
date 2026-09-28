@@ -923,41 +923,50 @@ fn parseDigits(digits: []const u8, base: u8) ?i32 {
 const Reg = enum { a, b, c, d, e, h, l, i, r, ixh, ixl, iyh, iyl, af, @"af'", bc, de, hl, sp, ix, iy };
 
 fn register(name: []const u8) ?Reg {
-    return NameTable(Reg).get(name);
+    return NameTable(Reg, &.{}).get(name);
 }
 
 /// Building a NameTable hashes every tag name byte by byte and probes for a
 /// free slot; the default quota of 1000 branches is too small for Keyword.
 const name_table_quota = 100_000;
 
-/// Case-insensitive lookup of an enum by tag name through a hash table built at
-/// comptime. std.meta.stringToEnum on a lowercased copy is much slower when the
-/// assembler runs at comptime.
-fn NameTable(comptime E: type) type {
+/// Another name for a tag of E.
+fn Alias(comptime E: type) type {
+    return struct { name: []const u8, value: E };
+}
+
+/// Case-insensitive lookup of an enum by tag name, or by one of `aliases`,
+/// through a hash table built at comptime. std.meta.stringToEnum on a
+/// lowercased copy is much slower when the assembler runs at comptime.
+fn NameTable(comptime E: type, comptime aliases: []const Alias(E)) type {
     const fields = @typeInfo(E).@"enum".fields;
-    const size = std.math.ceilPowerOfTwoAssert(usize, slots_per_entry * fields.len);
+    const size = std.math.ceilPowerOfTwoAssert(usize, slots_per_entry * (fields.len + aliases.len));
     const max_len = blk: {
         var m: usize = 0;
         for (fields) |f| m = @max(m, f.name.len);
+        for (aliases) |alias| m = @max(m, alias.name.len);
         break :blk m;
     };
     return struct {
-        const slots: [size]?E = blk: {
+        const slots: [size]?Alias(E) = blk: {
             @setEvalBranchQuota(name_table_quota);
-            var table: [size]?E = @splat(null);
-            for (fields) |f| {
-                var i = hashLower(f.name) & (size - 1);
-                while (table[i] != null) i = (i + 1) & (size - 1);
-                table[i] = @field(E, f.name);
-            }
+            var table: [size]?Alias(E) = @splat(null);
+            for (fields) |f| insert(&table, .{ .name = f.name, .value = @field(E, f.name) });
+            for (aliases) |alias| insert(&table, alias);
             break :blk table;
         };
+
+        fn insert(table: *[size]?Alias(E), entry: Alias(E)) void {
+            var i = hashLower(entry.name) & (size - 1);
+            while (table[i] != null) i = (i + 1) & (size - 1);
+            table[i] = entry;
+        }
 
         fn get(name: []const u8) ?E {
             if (name.len > max_len) return null;
             var i = hashLower(name) & (size - 1);
-            while (slots[i]) |e| : (i = (i + 1) & (size - 1)) {
-                if (std.ascii.eqlIgnoreCase(@tagName(e), name)) return e;
+            while (slots[i]) |entry| : (i = (i + 1) & (size - 1)) {
+                if (std.ascii.eqlIgnoreCase(entry.name, name)) return entry.value;
             }
             return null;
         }
@@ -1124,7 +1133,7 @@ fn condition(l: *Line, comptime position: enum { only, first }) ?isa.Cc {
     const t = l.peek();
     if (t.tag != .identifier) return null;
     if (position == .first and l.peekAt(1).tag != .comma) return null;
-    const cc = NameTable(isa.Cc).get(t.text) orelse return null;
+    const cc = NameTable(isa.Cc, &.{}).get(t.text) orelse return null;
     _ = l.take();
     if (position == .first) _ = l.take();
     return cc;
@@ -1194,7 +1203,6 @@ const Keyword = enum {
     scf,
     set,
     sla,
-    sli,
     sll,
     sra,
     srl,
@@ -1202,13 +1210,8 @@ const Keyword = enum {
     xor,
     org,
     db,
-    defb,
-    defm,
-    dm,
     dw,
-    defw,
     ds,
-    defs,
     end,
     equ,
     @"if",
@@ -1217,12 +1220,6 @@ const Keyword = enum {
     elseif,
     @"else",
     endif,
-    @".org",
-    @".db",
-    @".byte",
-    @".dw",
-    @".word",
-    @".ds",
     @".ascii",
     @".asciz",
     @".area",
@@ -1231,8 +1228,26 @@ const Keyword = enum {
     @".optsdcc",
 };
 
+/// Other names of directives and instructions. As aliases rather than tags of
+/// Keyword: every tag of an enum that hot code switches on costs compiler
+/// memory at comptime.
+const keyword_aliases = [_]Alias(Keyword){
+    .{ .name = "defb", .value = .db },
+    .{ .name = "defm", .value = .db },
+    .{ .name = "dm", .value = .db },
+    .{ .name = ".db", .value = .db },
+    .{ .name = ".byte", .value = .db },
+    .{ .name = "defw", .value = .dw },
+    .{ .name = ".dw", .value = .dw },
+    .{ .name = ".word", .value = .dw },
+    .{ .name = "defs", .value = .ds },
+    .{ .name = ".ds", .value = .ds },
+    .{ .name = ".org", .value = .org },
+    .{ .name = "sli", .value = .sll },
+};
+
 fn keyword(name: []const u8) ?Keyword {
-    return NameTable(Keyword).get(name);
+    return NameTable(Keyword, &keyword_aliases).get(name);
 }
 
 /// Assembles one line of source text. Labels defined on the line keep
@@ -1412,13 +1427,13 @@ fn kept(a: *const Assembler, t: Token) []const u8 {
 
 fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
     switch (kw) {
-        .db, .defb, .defm, .dm, .@".db", .@".byte" => return a.dataBytes(l),
-        .dw, .defw, .@".dw", .@".word" => return a.dataWords(l),
+        .db => return a.dataBytes(l),
+        .dw => return a.dataWords(l),
         else => try a.expectFits(l),
     }
 
     return switch (kw) {
-        .db, .defb, .defm, .dm, .@".db", .@".byte", .dw, .defw, .@".dw", .@".word" => unreachable, // DB and DW return from the switch above
+        .db, .dw => unreachable, // DB and DW return from the switch above
         inline .nop,
         .halt,
         .ei,
@@ -1472,11 +1487,10 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
         .im => a.interruptMode(l),
         inline .bit, .set, .res => |k| a.bitStatement(l, @field(BitOp, @tagName(k))),
         inline .rlc, .rrc, .rl, .rr, .sla, .sra, .sll, .srl => |k| a.rotate(l, @field(isa.Rot, @tagName(k))),
-        .sli => a.rotate(l, .sll),
-        .org, .@".org" => a.org(a.wordOf(try a.expression(l))),
+        .org => a.org(a.wordOf(try a.expression(l))),
         .@".ascii" => a.asciiString(l, .ascii),
         .@".asciz" => a.asciiString(l, .asciz),
-        .ds, .defs, .@".ds" => a.reserve(l),
+        .ds => a.reserve(l),
         .end => {
             // "END start" names the entry point.
             if (!l.atEnd()) a.entry = a.wordOf(try a.expression(l));
