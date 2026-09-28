@@ -300,3 +300,39 @@ test "SDCC's #< and #> stay the low and high byte where an operand is expected" 
         \\
     , &.{ 0x3E, 0x34, 0x3E, 0x12, 0x3E, 0xFF, 0x3E, 0xFF });
 }
+
+test "IFDEF and IFNDEF test symbols defined earlier in the pass" {
+    try expectBytes(
+        \\one EQU 1
+        \\  IFDEF one
+        \\  DB 1
+        \\  ENDIF
+        \\  IFDEF later
+        \\  DB 2
+        \\  ENDIF
+        \\  IFNDEF later
+        \\  DB 3
+        \\  ENDIF
+        \\  IF 0
+        \\skipped: NOP
+        \\  ENDIF
+        \\  IFDEF skipped
+        \\  DB 4
+        \\  ENDIF
+        \\later: NOP
+        \\
+    , &.{ 1, 3, 0 });
+}
+
+test "IF skips source lines, also those a Zig body passes to line()" {
+    const image = comptime z80.comptimeBuild(.{}, {}, ifInBody);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 3 }, image);
+}
+
+fn ifInBody(_: void, a: *Assembler) Assembler.Error!void {
+    try a.line("  DB 1");
+    try a.line("  IF 0");
+    try a.line("  DB 2");
+    try a.line("  ENDIF");
+    try a.line("  DB 3");
+}

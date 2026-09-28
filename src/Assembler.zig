@@ -17,6 +17,8 @@ const Token = Lexer.Token;
 const Assembler = @This();
 
 pub const max_passes = 8;
+/// IF blocks open at the same time.
+pub const max_if_depth = 32;
 pub const max_line_tokens = 64;
 pub const message_capacity = 120;
 
@@ -153,6 +155,15 @@ line_number: u32 = 0,
 ended: bool = false,
 /// The operand of END.
 entry: ?u16 = null,
+/// Open IF blocks, and the depth of the one whose branch is being skipped (0
+/// while lines are assembled). Bit d-1 of if_taken and if_else is for depth d:
+/// a branch of that block was assembled, and its ELSE was seen.
+if_depth: u6 = 0,
+skip_depth: u6 = 0,
+if_taken: u32 = 0,
+if_else: u32 = 0,
+/// Line of each open IF, for "IF without ENDIF".
+if_lines: [max_if_depth]u32 = undefined,
 /// Uses of symbols without a value in this pass.
 unresolved: u32 = 0,
 /// Last symbol whose value differs from the previous pass.
@@ -198,6 +209,11 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
         body(ctx, &a) catch |err| switch (err) {
             error.AssemblyFailed => {}, // already in the diagnostics
         };
+        if (a.if_depth != 0) {
+            a.line_number = a.if_lines[a.if_depth - 1];
+            a.report("IF without ENDIF", .{});
+            a.line_number = 0;
+        }
         // A second pass is needed only for forward references, and later
         // passes only while some symbol still moves.
         if (a.pass == 1 and a.unresolved == 0) break;
@@ -302,6 +318,10 @@ fn beginPass(a: *Assembler) void {
     a.statement_pc = a.pc;
     a.ended = false;
     a.entry = null;
+    a.if_depth = 0;
+    a.skip_depth = 0;
+    a.if_taken = 0;
+    a.if_else = 0;
     a.unresolved = 0;
     a.changed = null;
     a.scope = "";
@@ -1151,6 +1171,12 @@ const Keyword = enum {
     defs,
     end,
     equ,
+    @"if",
+    ifdef,
+    ifndef,
+    elseif,
+    @"else",
+    endif,
     @".org",
     @".db",
     @".byte",
@@ -1187,6 +1213,7 @@ pub fn line(a: *Assembler, text: []const u8) Error!void {
 fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!void {
     a.statement_pc = a.pc;
     a.original = original;
+    if (a.skip_depth != 0 and a.skipLine(copy)) return;
     var l = try a.tokenize(copy);
 
     // A label is "name:" / "name::" anywhere, or a name in column 0 that is
@@ -1207,6 +1234,9 @@ fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!voi
 
     if (name) |n| {
         const t = l.peek();
+        if (t.tag == .identifier) if (keyword(t.text)) |k| if (isConditional(k)) {
+            return a.fail("label '{s}' on a line with {s}", .{ n, t.text });
+        };
         if (t.tag == .equal or (t.tag == .identifier and keyword(t.text) == .equ)) {
             _ = l.take();
             try a.expectFits(&l);
@@ -1223,6 +1253,122 @@ fn assembleLine(a: *Assembler, original: []const u8, copy: []const u8) Error!voi
     const kw = keyword(t.text) orelse return a.fail("unknown instruction '{s}'", .{t.text});
     try a.statement(&l, kw);
     try a.expectEnd(&l);
+}
+
+/// A line in a block that IF skips. Only IF, IFDEF, IFNDEF, ELSEIF, ELSE and
+/// ENDIF are looked for, so the rest may hold anything. Returns false for the
+/// ELSEIF, ELSE or ENDIF of the skipped block itself, and for an IF nested too
+/// deep, which are then assembled as usual.
+fn skipLine(a: *Assembler, text: []const u8) bool {
+    var lexer: Lexer = .init(text);
+    var directive = lexer.next();
+    const after = lexer.next();
+    if (directive.tag == .identifier and (after.tag == .colon or after.tag == .double_colon)) {
+        directive = lexer.next();
+    } else if (directive.tag == .identifier and directive.col == 0 and keyword(directive.text) == null) {
+        directive = after;
+    }
+    if (directive.tag != .identifier) return true;
+    switch (keyword(directive.text) orelse return true) {
+        .@"if", .ifdef, .ifndef => {
+            if (a.if_depth == max_if_depth) return false;
+            a.openIf();
+            a.if_taken |= a.ifBit(); // inside a skipped block, no branch is assembled
+        },
+        .elseif, .@"else" => return a.if_depth != a.skip_depth,
+        .endif => {
+            if (a.if_depth == a.skip_depth) return false;
+            a.if_depth -= 1;
+        },
+        else => {},
+    }
+    return true;
+}
+
+fn isConditional(kw: Keyword) bool {
+    return switch (kw) {
+        .@"if", .ifdef, .ifndef, .elseif, .@"else", .endif => true,
+        else => false,
+    };
+}
+
+fn ifBit(a: *const Assembler) u32 {
+    return @as(u32, 1) << @intCast(a.if_depth - 1);
+}
+
+fn openIf(a: *Assembler) void {
+    a.if_depth += 1;
+    a.if_lines[a.if_depth - 1] = a.line_number;
+    a.if_taken &= ~a.ifBit();
+    a.if_else &= ~a.ifBit();
+}
+
+/// Assembles the current branch of the innermost block if `holds`, or skips it.
+fn branch(a: *Assembler, holds: bool) void {
+    if (holds) {
+        a.if_taken |= a.ifBit();
+        a.skip_depth = 0;
+    } else {
+        a.skip_depth = a.if_depth;
+    }
+}
+
+/// The condition of IF, ELSEIF, IFDEF or IFNDEF. A value not known yet, such
+/// as a label further down in the first pass, counts as false; the next pass
+/// uses the value from this one.
+fn ifCondition(a: *Assembler, l: *Line, kw: Keyword) Error!bool {
+    switch (kw) {
+        .@"if", .elseif => {
+            const v = try a.expression(l);
+            return v.known and v.value != 0;
+        },
+        .ifdef, .ifndef => {
+            const t = l.take();
+            if (t.tag != .identifier) return a.fail("expected a symbol name, found '{s}'", .{t.text});
+            // Only a definition earlier in this pass counts, as in sjasmplus.
+            const defined = if (a.find(t.text)) |s| s.pass == a.pass else false;
+            return defined == (kw == .ifdef);
+        },
+        else => unreachable, // statement() passes only these four
+    }
+}
+
+fn conditional(a: *Assembler, l: *Line, kw: Keyword) Error!void {
+    switch (kw) {
+        .@"if", .ifdef, .ifndef => {
+            if (a.if_depth == max_if_depth) return a.fail("IF nested more than {d} deep", .{max_if_depth});
+            a.openIf();
+            a.branch(a.ifCondition(l, kw) catch |err| {
+                a.branch(false);
+                return err;
+            });
+        },
+        .elseif => {
+            if (a.if_depth == 0) return a.fail("ELSEIF without IF", .{});
+            if (a.if_else & a.ifBit() != 0) return a.fail("ELSEIF after ELSE", .{});
+            if (a.if_taken & a.ifBit() != 0) {
+                a.skip_depth = a.if_depth;
+                l.skipRest();
+                return;
+            }
+            a.branch(a.ifCondition(l, kw) catch |err| {
+                a.branch(false);
+                return err;
+            });
+        },
+        .@"else" => {
+            if (a.if_depth == 0) return a.fail("ELSE without IF", .{});
+            if (a.if_else & a.ifBit() != 0) return a.fail("ELSE after ELSE", .{});
+            a.if_else |= a.ifBit();
+            a.branch(a.if_taken & a.ifBit() == 0);
+        },
+        .endif => {
+            if (a.if_depth == 0) return a.fail("ENDIF without IF", .{});
+            if (a.skip_depth == a.if_depth) a.skip_depth = 0;
+            a.if_depth -= 1;
+        },
+        else => unreachable, // statement() passes only the conditional keywords
+    }
 }
 
 /// A token of the current line as a slice of the caller's text, for names kept
@@ -1304,6 +1450,7 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
             a.ended = true;
         },
         .equ => a.fail("EQU needs a label", .{}),
+        .@"if", .ifdef, .ifndef, .elseif, .@"else", .endif => a.conditional(l, kw),
         .@".area" => {
             const name = l.take();
             if (name.tag != .identifier) return a.fail("expected an area name, found '{s}'", .{name.text});
