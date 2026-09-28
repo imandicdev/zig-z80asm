@@ -32,9 +32,11 @@ pub const ComptimeOptions = struct {
     /// Address of the first byte when the source does not start with ORG;
     /// without it, the machine's origin, or 0.
     origin: ?u16 = null,
-    /// A preset of the output format and the default origin (see `Machine`).
+    /// The machine the program is for: its format, and for cpm the origin
+    /// (see `Machine`).
     machine: ?Machine = null,
-    /// The format of the returned file; without it, the machine's, or bin.
+    /// The format of the returned file. It wins over FORMAT in the source,
+    /// which wins over the machine's; without any of them, bin.
     format: ?Format = null,
     /// The files INCLUDE and INCBIN can name, for example
     /// `.{ .{ .name = "sysvars.asm", .data = @embedFile("sysvars.asm") } }`.

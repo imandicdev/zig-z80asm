@@ -27,14 +27,14 @@ The last form also assembles the Spectrum ROM at comptime, which is slow.
 ## Performance
 
 The full Spectrum ROM (17,699 lines with the sysvars file), before the
-optimizations, in 0.1.0 and in 0.2.0. Zig 0.16.0, Windows x86_64.
+optimizations, in 0.1.0, 0.2.0 and 0.3.0. Zig 0.16.0, Windows x86_64.
 
-| | Before | 0.1.0 | 0.2.0 |
-|---|---|---|---|
-| Comptime: compile time | 28 min | 50 s | 48 s |
-| Comptime: peak memory | about 5 GB | 1,067 MB | 1,040 MB |
-| Runtime, ReleaseFast | 13.1 ms | 3.4 ms | 3.4 ms |
-| Runtime, Debug | 107.6 ms | 40.7 ms | 40.7 ms |
+| | Before | 0.1.0 | 0.2.0 | 0.3.0 |
+|---|---|---|---|---|
+| Comptime: compile time | 28 min | 50 s | 48 s | 58 s |
+| Comptime: peak memory | about 5 GB | 1,067 MB | 1,040 MB | 1,053 MB |
+| Runtime, ReleaseFast | 13.1 ms | 3.4 ms | 3.4 ms | 4.0 ms |
+| Runtime, Debug | 107.6 ms | 40.7 ms | 40.7 ms | 41.3 ms |
 
 Comptime is the test's compile step with `-Dprograms-comptime=true`, in a
 Debug build as the tests use, so it includes the 0xAA overwrite of line
@@ -47,6 +47,14 @@ as it was measured for that release. Measured on the same day as 0.2.0
 (three comptime builds and five `zig build bench` runs each), 0.1.0 took
 48 s, 1,069-1,070 MB, 3.39 ms and 41.07 ms, and 0.2.0 48-49 s, 1,040 MB,
 3.42 ms and 40.70 ms.
+
+0.3.0 was measured on a slower day than the columns before it. 0.2.0,
+measured again that day (one comptime build and ten `zig build bench` runs,
+interleaved with those of 0.3.0), took 59 s, 1,039 MB, 3.74 ms and 41.5 ms.
+So at comptime 0.3.0 takes as long as 0.2.0 and 14 MB more, and at runtime
+it is about 7% slower in ReleaseFast and as fast in Debug. The runtime cost
+came with the comparison and logical operators and with conditional
+assembly; later steps took back part of it (see Step by step).
 
 The cleanup first made comptime about 2% slower. Three of its changes cost
 time at comptime, where every function call is interpreted: the per-pass
@@ -63,7 +71,7 @@ about 50 s and repeated runs spread by up to 2 s, so no single step stood
 out; the candidates were then measured in pairs, five interleaved runs
 each.
 
-The goal of 1 GB is missed by about 4% (7% in 0.1.0). What is left is spread over parsing,
+The goal of 1 GB is missed by about 4% in 0.2.0 and 5% in 0.3.0 (7% in 0.1.0). What is left is spread over parsing,
 expressions and encoding at comptime, where every intermediate value stays
 in the compiler's memory until the comptime call ends; no single part
 accounts for 10%. The largest single one, the [64]Token array of each line,
@@ -88,11 +96,33 @@ takes for a 10-line slice.
 | Line copies overwritten after use (Debug) | 3.1 ms / 39.5 ms | | 48 s, 1,076 MB |
 | DB and DW without a limit on values (not an optimization) | 3.4 ms / 40.7 ms | | 50 s, 1,067 MB |
 | Code review cleanup, 0.2.0 (not an optimization) | 3.4 ms / 40.7 ms | | 48 s, 1,040 MB |
+| 0.2.0 again, on the day of the 0.3 steps | 3.61 ms / 41.5 ms | | 59 s, 1,039 MB |
+| Entry address, the com format and the cpm machine | 3.63 ms / 42.8 ms | | 57 s, 1,040 MB |
+| Comparison and logical operators | 3.79 ms / 42.0 ms | | 60 s, 1,070 MB |
+| Conditional assembly | 4.09 ms / 42.5 ms | | 57 s, 1,094 MB |
+| sjasmplus local labels | 4.16 ms / 42.3 ms | | 60 s, 1,095 MB |
+| Fewer token tags, the label check only on IF lines | 4.07 ms / 40.8 ms | | 57 s, 1,060 MB |
+| Directive and instruction aliases outside the Keyword enum | 3.96 ms / 40.7 ms | | 57 s, 1,048 MB |
+| File table: INCLUDE, INCBIN, OUTPUT | 3.85 ms / 40.3 ms | | 57 s, 1,051 MB |
+| Formats tap, amsdos, cmd and msx, FORMAT | 3.99 ms / 40.7 ms | | 57 s, 1,052 MB |
+| Format sna | 3.82 ms / 41.7 ms | | 57 s, 1,052 MB |
+| Review fixes, 0.3.0 | 3.81 ms / 41.3 ms | | 58 s, 1,053 MB |
 
 The DB and DW change costs 0.3 ms at runtime without running any new code on
 the ROM: the DB and DW lines there all fit in one token buffer. Moving the
 new dispatch back out of `statement()` made it 3.5 ms, so the difference
 comes from how the compiler lays out the changed functions.
+
+The 0.3 rows were measured on one day, starting with 0.2.0 again. The medians
+of `zig build bench` spread by up to 0.5 ms that day, so their ReleaseFast
+time is the lowest of the 25 runs, as the median of five runs interleaved
+across the steps; Debug is the median of one run, and comptime one build
+from an empty cache. Differences of about 0.1 ms and 2 s are within the
+spread. From the file table on, the ROM is the unmodified source with its
+INCLUDE. Comparisons, logical operators and conditional assembly cost
+memory at comptime (up to 1,095 MB) until fewer token tags and the aliases
+outside the Keyword enum took it back, since every tag of an enum that the
+parser switches on costs compiler memory.
 
 ## SDCC
 
@@ -108,4 +138,4 @@ comes from how the compiler lays out the changed functions.
 | | |
 |---|---|
 | Source | [agn453/ZEXALL](https://github.com/agn453/ZEXALL) at `8f71d418bae69a476a5a0e5c6e122c8801b8d9f4`, `zexdoc.z80` (Frank D. Cringle, GPL-2.0) |
-| Status | Skipped: the source defines and uses macros (`tstr`, `tmsg`, lines 170-192, with M80-style `&lab` parameters and conditionals). Macros are planned after the first release. |
+| Status | Skipped: the source defines and uses macros (`tstr`, `tmsg`, lines 170-192, with M80-style `&lab` parameters and conditionals). Macros are planned for 0.5, with ZEXDOC as their test. |
