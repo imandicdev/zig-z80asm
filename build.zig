@@ -90,18 +90,29 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = reject_runtime })).step);
 
     // CP/M acceptance: the CLI assembles test/cases/cpm_hello.asm for the cpm
-    // machine, and the program must print "hello" in cpm2sim. Without
-    // -Dcpm2sim the step does nothing, until fetch.py pins the simulator.
-    const cpm_step = b.step("cpm", "Run test/cases/cpm_hello.asm in cpm2sim (needs -Dcpm2sim=PATH)");
-    if (b.option([]const u8, "cpm2sim", "Path of the cpm2sim CP/M simulator")) |cpm2sim| {
+    // machine, and the ZEX harness of cpm2sim, a separate repository, runs it.
+    // The harness prints what BDOS 9 prints and then its own "[zexrun] done:"
+    // line, both on stderr. cpm2sim builds with Zig 0.15, which
+    // -Dcpm2sim-zig or CPM2SIM_ZIG can name.
+    const cpm_step = b.step("cpm", "Run test/cases/cpm_hello.asm in the ZEX harness of cpm2sim");
+    const cpm2sim = b.option([]const u8, "cpm2sim", "Directory of cpm2sim (default: CPM2SIM, or ../cpm2sim)") orelse
+        b.graph.environ_map.get("CPM2SIM") orelse b.pathFromRoot("../cpm2sim");
+    const cpm2sim_zig = b.option([]const u8, "cpm2sim-zig", "Zig that builds cpm2sim (default: CPM2SIM_ZIG, or this one)") orelse
+        b.graph.environ_map.get("CPM2SIM_ZIG") orelse b.graph.zig_exe;
+    if (std.Io.Dir.cwd().access(b.graph.io, b.pathJoin(&.{ cpm2sim, "build.zig" }), .{})) |_| {
         const assemble_hello = b.addRunArtifact(exe);
         assemble_hello.addArgs(&.{ "--machine", "cpm" });
         assemble_hello.addFileArg(b.path("test/cases/cpm_hello.asm"));
         const hello_com = assemble_hello.addOutputFileArg("HELLO.COM");
-        const run_hello = b.addSystemCommand(&.{cpm2sim});
+        const run_hello = b.addSystemCommand(&.{ cpm2sim_zig, "build", "zex", "-Doptimize=ReleaseFast", "--" });
+        run_hello.setCwd(.{ .cwd_relative = cpm2sim });
         run_hello.addFileArg(hello_com);
-        run_hello.addCheck(.{ .expect_stdout_match = "hello" });
+        run_hello.addCheck(.{ .expect_stderr_match = "hello\r\n\n[zexrun] done:" });
         cpm_step.dependOn(&run_hello.step);
+    } else |_| {
+        const skip = b.allocator.create(std.Build.Step) catch @panic("OOM");
+        skip.* = .init(.{ .id = .custom, .name = b.fmt("skip: no cpm2sim at {s}", .{cpm2sim}), .owner = b, .makeFn = skipCpm });
+        cpm_step.dependOn(skip);
     }
 
     // Known third-party programs, kept outside the repository.
@@ -199,4 +210,8 @@ fn embedThirdParty(b: *std.Build, m: *std.Build.Module, dir: []const u8, names: 
         } else std.debug.panic("unknown third-party file '{s}'", .{name});
         m.addAnonymousImport(name, .{ .root_source_file = .{ .cwd_relative = b.pathJoin(&.{ dir, file.path }) } });
     }
+}
+
+fn skipCpm(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
+    std.debug.print("{s} (-Dcpm2sim=DIR or CPM2SIM); the CP/M test did not run\n", .{step.name});
 }

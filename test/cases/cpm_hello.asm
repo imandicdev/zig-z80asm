@@ -1,5 +1,4 @@
-; CP/M: prints a line through BDOS function 9 and returns to the CCP.
-; `zig build cpm -Dcpm2sim=PATH` runs it in the simulator.
+; CP/M: prints a line through BDOS function 9 and returns to CP/M.
 
 bdos            EQU 0005h
 print_string    EQU 9
@@ -8,7 +7,7 @@ print_string    EQU 9
 start:  LD DE,message
         LD C,print_string
         CALL bdos
-        RET
+        JP 0            ; warm boot, back to CP/M
 
 message:
         DB "hello",13,10,"$"
