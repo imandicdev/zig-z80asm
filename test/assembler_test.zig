@@ -248,3 +248,45 @@ test "Zig calls and source text give the same bytes" {
     try std.testing.expectEqualSlices(u8, from_text, r.bytes);
     try std.testing.expectEqualSlices(u8, &.{ 0x21, 0x0A, 0x01, 0xDD, 0x7E, 0x0A, 0x10, 0xF8, 0x18, 0xF6, 'o', 'k' }, from_zig);
 }
+
+/// `Result.entry` of a comptime assembly.
+fn comptimeEntry(comptime source: []const u8) ?u16 {
+    return comptime blk: {
+        @setEvalBranchQuota(1_000_000);
+        var ws: z80.Workspace(0x100, 64, 4) = undefined;
+        break :blk z80.assemble(source, .{}, ws.buffers()).entry;
+    };
+}
+
+test "END gives the entry address, also through a forward reference" {
+    const source = "  ORG 8000h\n  JP main\n  NOP\nmain: RET\n  END main\n";
+    try std.testing.expectEqual(@as(?u16, 0x8004), runtime(source).entry);
+    try std.testing.expectEqual(@as(?u16, 0x8004), comptimeEntry(source));
+    try std.testing.expectEqual(@as(?u16, null), runtime("  NOP\n").entry);
+}
+
+test "the cpm machine gives a com file at 0x0100" {
+    const r = z80.assemble("  NOP\n", .{ .machine = .cpm }, workspace.buffers());
+    try expectOk(r);
+    try std.testing.expectEqual(0x0100, r.origin);
+    try std.testing.expect(r.format == .com);
+
+    const hello = @embedFile("cases/cpm_hello.asm");
+    const reference = @embedFile("cases/cpm_hello.bin");
+    try std.testing.expectEqualSlices(u8, reference, comptime z80.comptimeAssemble(hello, .{ .machine = .cpm }));
+    const h = z80.assemble(hello, .{ .machine = .cpm }, workspace.buffers());
+    try expectOk(h);
+    var file: [reference.len]u8 = undefined;
+    try std.testing.expectEqualSlices(u8, reference, z80.formats.write(h.format, h.image(), &file));
+}
+
+test "an explicit origin or format overrides the machine" {
+    const r = z80.assemble("  NOP\n", .{ .machine = .cpm, .origin = 0x8000, .format = .bin }, workspace.buffers());
+    try expectOk(r);
+    try std.testing.expectEqual(0x8000, r.origin);
+    try std.testing.expect(r.format == .bin);
+
+    const bad = z80.assemble("  NOP\n", .{ .machine = .cpm, .origin = 0x8000 }, workspace.buffers());
+    var buf: [100]u8 = undefined;
+    try std.testing.expectEqualStrings("the com format needs origin 0x0100, not 0x8000", try std.fmt.bufPrint(&buf, "{f}", .{bad.diagnostics[0]}));
+}

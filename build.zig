@@ -89,6 +89,21 @@ pub fn build(b: *std.Build) void {
     reject_runtime.addImport("z80asm", mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = reject_runtime })).step);
 
+    // CP/M acceptance: the CLI assembles test/cases/cpm_hello.asm for the cpm
+    // machine, and the program must print "hello" in cpm2sim. Without
+    // -Dcpm2sim the step does nothing, until fetch.py pins the simulator.
+    const cpm_step = b.step("cpm", "Run test/cases/cpm_hello.asm in cpm2sim (needs -Dcpm2sim=PATH)");
+    if (b.option([]const u8, "cpm2sim", "Path of the cpm2sim CP/M simulator")) |cpm2sim| {
+        const assemble_hello = b.addRunArtifact(exe);
+        assemble_hello.addArgs(&.{ "--machine", "cpm" });
+        assemble_hello.addFileArg(b.path("test/cases/cpm_hello.asm"));
+        const hello_com = assemble_hello.addOutputFileArg("HELLO.COM");
+        const run_hello = b.addSystemCommand(&.{cpm2sim});
+        run_hello.addFileArg(hello_com);
+        run_hello.addCheck(.{ .expect_stdout_match = "hello" });
+        cpm_step.dependOn(&run_hello.step);
+    }
+
     // Known third-party programs, kept outside the repository.
     if (b.option([]const u8, "thirdparty", "Directory with the third-party programs (test/programs/README.md)")) |dir| {
         const programs_comptime = b.option(bool, "programs-comptime", "Also assemble the large programs at comptime (slow)") orelse false;

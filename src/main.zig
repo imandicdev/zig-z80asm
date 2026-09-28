@@ -12,9 +12,13 @@ const diagnostic_count = 64;
 const max_source_size = 16 << 20;
 
 const usage =
-    \\usage: z80asm [--origin ADDR] INPUT.asm OUTPUT.bin
+    \\usage: z80asm [--origin ADDR] [--machine NAME] INPUT.asm OUTPUT
     \\
-    \\Writes the memory image from the lowest to the highest address written.
+    \\Writes the memory image from the lowest to the highest address written, as
+    \\the file the machine runs.
+    \\
+    \\  --origin ADDR   address of the first byte when the source has no ORG
+    \\  --machine cpm   CP/M: a .com file at 0x0100
     \\
 ;
 
@@ -36,6 +40,11 @@ pub fn main(init: std.process.Init) !void {
             if (i == args.len) std.process.fatal("--origin needs an address", .{});
             options.origin = std.fmt.parseInt(u16, args[i], 0) catch
                 std.process.fatal("invalid origin '{s}'", .{args[i]});
+        } else if (std.mem.eql(u8, arg, "--machine")) {
+            i += 1;
+            if (i == args.len) std.process.fatal("--machine needs a name", .{});
+            options.machine = std.meta.stringToEnum(z80.Machine, args[i]) orelse
+                std.process.fatal("unknown machine '{s}'\n{s}", .{ args[i], usage });
         } else if (input == null) {
             input = arg;
         } else if (output == null) {
@@ -65,6 +74,8 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     }
 
-    cwd.writeFile(init.io, .{ .sub_path = output_path, .data = result.bytes }) catch |err|
+    const file = try arena.alloc(u8, z80.formats.fileLen(result.format, result.bytes.len));
+    const data = z80.formats.write(result.format, result.image(), file);
+    cwd.writeFile(init.io, .{ .sub_path = output_path, .data = data }) catch |err|
         std.process.fatal("cannot write '{s}': {t}", .{ output_path, err });
 }

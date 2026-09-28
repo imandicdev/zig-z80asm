@@ -9,6 +9,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const isa = @import("isa.zig");
+const formats = @import("formats.zig");
+const Machine = @import("machine.zig").Machine;
 const Lexer = @import("Lexer.zig");
 const Token = Lexer.Token;
 
@@ -33,8 +35,21 @@ const address_space = 0x10000;
 pub const Error = error{AssemblyFailed};
 
 pub const Options = struct {
-    /// Address of the first byte when the source does not start with ORG.
-    origin: u16 = 0,
+    /// Address of the first byte when the source does not start with ORG;
+    /// without it, the machine's origin, or 0.
+    origin: ?u16 = null,
+    /// A preset of the output format and the default origin.
+    machine: ?Machine = null,
+    /// The output format; without it, the machine's, or bin.
+    format: ?formats.Format = null,
+
+    fn defaultOrigin(o: Options) u16 {
+        return o.origin orelse if (o.machine) |m| m.origin() else 0;
+    }
+
+    fn outputFormat(o: Options) formats.Format {
+        return o.format orelse if (o.machine) |m| m.format() else .bin;
+    }
 };
 
 /// A slot of the symbol hash table; an empty name marks a free slot.
@@ -94,6 +109,10 @@ pub const Result = struct {
     origin: u16,
     /// Memory image from `origin` to the highest address written; gaps are zero.
     bytes: []const u8,
+    /// The operand of END: where execution starts. Null without one.
+    entry: ?u16,
+    /// The format the image is for; `formats.write` makes the file.
+    format: formats.Format,
     diagnostics: []const Diagnostic,
     /// Diagnostics that did not fit in the buffer.
     diagnostics_dropped: usize,
@@ -101,6 +120,10 @@ pub const Result = struct {
 
     pub fn ok(r: Result) bool {
         return r.diagnostics.len == 0 and r.diagnostics_dropped == 0;
+    }
+
+    pub fn image(r: Result) formats.Image {
+        return .{ .bytes = r.bytes, .origin = r.origin, .entry = r.entry };
     }
 };
 
@@ -112,6 +135,8 @@ pub const Value = struct {
 };
 
 options: Options,
+/// Address of the first byte when the source does not start with ORG.
+default_origin: u16,
 out: []u8,
 symbols: []Symbol,
 symbol_count: usize = 0,
@@ -126,6 +151,8 @@ line_number: u32 = 0,
 /// Set by END. The rest of a source is not read, and code that a Zig body
 /// emits afterwards is an error.
 ended: bool = false,
+/// The operand of END.
+entry: ?u16 = null,
 /// Uses of symbols without a value in this pass.
 unresolved: u32 = 0,
 /// Last symbol whose value differs from the previous pass.
@@ -159,6 +186,7 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
     var written: [address_space / @bitSizeOf(u8)]u8 = undefined;
     var a: Assembler = .{
         .options = options,
+        .default_origin = options.defaultOrigin(),
         .out = buffers.output,
         .symbols = buffers.symbols[0..slots],
         .diagnostics = buffers.diagnostics,
@@ -179,9 +207,15 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
             break;
         }
     }
+    const format = options.outputFormat();
+    if (formats.requiredOrigin(format)) |origin| {
+        if (!a.empty and a.low != origin) a.report("the {t} format needs origin 0x{X:0>4}, not 0x{X:0>4}", .{ format, origin, a.low });
+    }
     return .{
-        .origin = if (a.empty) options.origin else @intCast(a.low),
+        .origin = if (a.empty) a.default_origin else @intCast(a.low),
         .bytes = a.out[0 .. a.high - a.low],
+        .entry = a.entry,
+        .format = format,
         .diagnostics = a.diagnostics[0..a.diagnostic_count],
         .diagnostics_dropped = a.diagnostics_dropped,
         .passes = a.pass,
@@ -264,9 +298,10 @@ fn lineEnd(text: []const u8) usize {
 /// assignment, they made the Spectrum ROM about 0.5 s slower at comptime.
 fn beginPass(a: *Assembler) void {
     a.pass += 1;
-    a.pc = a.options.origin;
+    a.pc = a.default_origin;
     a.statement_pc = a.pc;
     a.ended = false;
+    a.entry = null;
     a.unresolved = 0;
     a.changed = null;
     a.scope = "";
@@ -1232,8 +1267,8 @@ fn statement(a: *Assembler, l: *Line, kw: Keyword) Error!void {
         .@".asciz" => a.asciiString(l, .asciz),
         .ds, .defs, .@".ds" => a.reserve(l),
         .end => {
-            // "END start" names the entry point, which a flat image does not need.
-            if (!l.atEnd()) _ = try a.expression(l);
+            // "END start" names the entry point.
+            if (!l.atEnd()) a.entry = a.wordOf(try a.expression(l));
             a.ended = true;
         },
         .equ => a.fail("EQU needs a label", .{}),

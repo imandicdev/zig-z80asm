@@ -1,6 +1,7 @@
 //! Inputs the assembler must reject. build.zig compiles each one at comptime
 //! and expects a compile error ending in `expect`; test/reject_test.zig runs
-//! the same input at runtime and expects the same text as the first diagnostic.
+//! the same input at runtime, with the options read as ZON, and expects the
+//! same text as the first diagnostic.
 
 pub const Case = struct {
     name: []const u8,
@@ -59,5 +60,6 @@ pub const cases = [_]Case{
     .{ .name = "equ_too_long", .source = "x EQU " ++ "1+" ** 40 ++ "1\n", .expect = "line 1: line has more than 64 tokens" },
     .{ .name = "data_value_too_long", .source = "  DB 1," ++ "1+" ** 40 ++ "1,2\n", .expect = "line 1: value has more than 62 tokens" },
     .{ .name = "stray_character_after_many_values", .source = "  DB " ++ "1," ** 100 ++ "@\n", .expect = "line 1: unexpected character '@'" },
+    .{ .name = "com_origin", .options = ".{ .machine = .cpm }", .source = "  ORG 8000h\n  NOP\n", .expect = "the com format needs origin 0x0100, not 0x8000" },
     .{ .name = "garbage_after_many_values", .source = "  DW " ++ "1," ** 100 ++ "2 3\n", .expect = "line 1: unexpected '3'" },
 };
