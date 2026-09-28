@@ -71,5 +71,7 @@ pub const cases = [_]Case{
     .{ .name = "ifdef_without_name", .source = "  IFDEF 5\n  ENDIF\n", .expect = "line 1: expected a symbol name, found '5'" },
     .{ .name = "label_on_endif", .source = "  IF 1\nx: ENDIF\n", .expect = "line 2: label 'x' on a line with ENDIF" },
     .{ .name = "single_equal_is_not_equality", .source = "  DB 1 = 1\n", .expect = "line 1: unexpected '='" },
+    .{ .name = "local_label_twice_in_one_scope", .source = "outer:\n.x: NOP\n.x: NOP\n", .expect = "line 3: duplicate symbol '.x'" },
+    .{ .name = "local_label_of_another_scope", .source = "a1:\n.x: NOP\nb1:\n  JP .x\n", .expect = "line 4: undefined symbol '.x'" },
     .{ .name = "garbage_after_many_values", .source = "  DW " ++ "1," ** 100 ++ "2 3\n", .expect = "line 1: unexpected '3'" },
 };

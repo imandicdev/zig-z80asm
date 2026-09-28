@@ -57,7 +57,7 @@ pub const Options = struct {
 /// A slot of the symbol hash table; an empty name marks a free slot.
 pub const Symbol = struct {
     name: []const u8,
-    /// For sdas local labels such as 00101$: the label they belong to.
+    /// For local labels (sdas 00101$, sjasmplus .loop): the name they belong to.
     scope: []const u8,
     hash: u32,
     value: Value,
@@ -142,6 +142,9 @@ default_origin: u16,
 out: []u8,
 symbols: []Symbol,
 symbol_count: usize = 0,
+/// Whether a sjasmplus .local label has been defined, in any pass; until then
+/// no name is looked at for the dot of outer.loop.
+dot_locals: bool = false,
 diagnostics: []Diagnostic,
 diagnostic_count: usize = 0,
 diagnostics_dropped: usize = 0,
@@ -170,6 +173,8 @@ unresolved: u32 = 0,
 changed: ?[]const u8 = null,
 /// Last ordinary label; scope of the following sdas local labels.
 scope: []const u8 = "",
+/// Last ordinary label or EQU; scope of the following sjasmplus .local labels.
+dot_scope: []const u8 = "",
 /// Current sdas area when it is not _CODE. Areas are placed by the SDCC
 /// linker, which z80asm does not replace, so only _CODE may hold anything.
 other_area: ?[]const u8 = null,
@@ -325,6 +330,7 @@ fn beginPass(a: *Assembler) void {
     a.unresolved = 0;
     a.changed = null;
     a.scope = "";
+    a.dot_scope = "";
     a.other_area = null;
     a.diagnostic_count = 0;
     a.diagnostics_dropped = 0;
@@ -368,12 +374,19 @@ pub fn org(a: *Assembler, address: u16) void {
 pub fn label(a: *Assembler, name: []const u8) Error!void {
     try a.checkArea();
     try a.define(name, .{ .value = @intCast(a.pc) });
-    if (!isLocal(name)) a.scope = name;
+    // An ordinary label starts a scope for both kinds of local label.
+    if (!isLocal(name) and name[0] != '.') {
+        a.scope = name;
+        a.dot_scope = name;
+    }
 }
 
 /// `name` is kept, not copied; see `run`.
 pub fn equ(a: *Assembler, name: []const u8, v: Value) Error!void {
-    return a.define(name, v);
+    try a.define(name, v);
+    // As in sjasmplus, EQU starts a new scope for .local labels, but not for
+    // sdas ones.
+    if (!isLocal(name) and name[0] != '.') a.dot_scope = name;
 }
 
 pub fn emit(a: *Assembler, e: isa.Encoding) Error!void {
@@ -483,15 +496,28 @@ fn slot(a: *Assembler, name: []const u8, scope: []const u8, hash: u32) *Symbol {
 }
 
 /// The scope `name` is looked up in: the current one for local labels.
+/// The scope `name` is looked up in: sdas 00101$ and sjasmplus .loop labels
+/// belong to the label before them.
 fn scopeOf(a: *const Assembler, name: []const u8) []const u8 {
-    return if (isLocal(name)) a.scope else "";
+    if (isLocal(name)) return a.scope;
+    return if (name[0] == '.') a.dot_scope else "";
 }
 
 fn find(a: *Assembler, name: []const u8) ?*Symbol {
     if (a.symbol_count == 0) return null;
     const scope = a.scopeOf(name);
     const s = a.slot(name, scope, hashName(name, scope));
-    return if (s.name.len == 0) null else s;
+    if (s.name.len != 0) return s;
+    // outer.loop names the .loop of outer. The dot is looked for only when the
+    // name itself is not found and the source has .local labels: looking at
+    // every name for it with std.mem.indexOfScalar made the Spectrum ROM 2.3 s
+    // slower at comptime.
+    if (!a.dot_locals) return null;
+    const dot = for (name, 0..) |c, i| {
+        if (c == '.' and i > 0) break i;
+    } else return null;
+    const outer = a.slot(name[dot..], name[0..dot], hashName(name[dot..], name[0..dot]));
+    return if (outer.name.len == 0) null else outer;
 }
 
 fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
@@ -499,6 +525,7 @@ fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
     // Also keeps `slot` away from a table without slots.
     if (capacity == 0) return a.fail("too many symbols (capacity 0)", .{});
     const scope = a.scopeOf(name);
+    if (name[0] == '.') a.dot_locals = true;
     const hash = hashName(name, scope);
     const s = a.slot(name, scope, hash);
     if (s.name.len != 0) {
