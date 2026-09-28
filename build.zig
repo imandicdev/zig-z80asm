@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) void {
     const CliFile = struct { import: []const u8, args: []const []const u8, output: []const u8 };
     for ([_]CliFile{
         .{ .import = "cli_tap", .args = &.{}, .output = "program.tap" },
+        .{ .import = "cli_sna", .args = &.{}, .output = "program.sna" },
         .{ .import = "cli_amsdos", .args = &.{ "--machine", "cpc" }, .output = "am.cpc" },
         .{ .import = "cli_cmd", .args = &.{}, .output = "program.cmd" },
     }) |cli| {

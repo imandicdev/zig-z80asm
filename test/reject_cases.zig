@@ -82,6 +82,7 @@ pub const cases = [_]Case{
     .{ .name = "format_without_name", .source = "  FORMAT 5\n", .expect = "line 1: expected a format name, found '5'" },
     .{ .name = "title_of_a_format_without_one", .source = "  FORMAT cmd, \"x\"\n", .expect = "line 1: the cmd format has no name" },
     .{ .name = "tap_name_too_long", .source = "  FORMAT tap, \"elevenchars\"\n  NOP\n", .expect = "a tap name has at most 10 characters, not 'elevenchars'" },
+    .{ .name = "sna_below_ram", .source = "  FORMAT sna\n  ORG 3FFFh\n  NOP\n", .expect = "the sna format holds addresses from 0x4000 on, not 0x3FFF" },
     .{ .name = "tap_too_long", .source = "  FORMAT tap\n  ORG 0\n  DS 0FFFEh\n", .expect = "the tap format holds at most 65533 bytes, not 65534" },
     .{ .name = "amsdos_too_long", .source = "  FORMAT amsdos\n  ORG 0\n  DS 10000h\n", .expect = "the amsdos format holds at most 65535 bytes, not 65536" },
     .{ .name = "amsdos_name_too_long", .source = "  FORMAT amsdos, \"toolongname.bin\"\n  NOP\n", .expect = "an AMSDOS name has at most 8 characters, a dot and 3 more, not 'toolongname.bin'" },

@@ -288,6 +288,9 @@ pub fn run(options: Options, buffers: Buffers, ctx: anytype, comptime body: fn (
     if (formats.requiredOrigin(format)) |origin| {
         if (!a.empty and a.low != origin) a.report("the {t} format needs origin 0x{X:0>4}, not 0x{X:0>4}", .{ format, origin, a.low });
     }
+    if (formats.lowestAddress(format)) |lowest| {
+        if (!a.empty and a.low < lowest) a.report("the {t} format holds addresses from 0x{X:0>4} on, not 0x{X:0>4}", .{ format, lowest, a.low });
+    }
     if (formats.maxLen(format)) |max| {
         if (a.high - a.low > max) a.report("the {t} format holds at most {d} bytes, not {d}", .{ format, max, a.high - a.low });
     }

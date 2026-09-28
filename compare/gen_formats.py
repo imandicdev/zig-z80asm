@@ -3,6 +3,8 @@ appmake. The files are committed, so `zig build test` needs neither tool.
 
 - program.tap: sjasmplus SAVETAP ..., CODE, "program" (appmake +zx writes 0
   where the ROM's SAVE ... CODE and sjasmplus write 32768, so it is not used)
+- program.sna: sjasmplus SAVESNA
+- sna_stack.sna: sjasmplus SAVESNA of sna_stack.asm, which covers the stack
 - program.amsdos: sjasmplus SAVEAMSDOS, which leaves the name empty
 - program_appmake.amsdos: appmake +cpc, with the name AM.CPC
 - program.cmd: appmake +trs80 --cmd
@@ -40,10 +42,12 @@ def appmake_path(parser, args):
     return exe
 
 
-def run(args, cwd):
+def run(args, cwd, expected=()):
+    """Runs a tool, which must print nothing but its progress and the
+    warnings that contain one of `expected`."""
     r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
     noise = [l for l in r.stdout.splitlines() + r.stderr.splitlines()
-             if l and not l.startswith(("Pass", "Errors: 0"))]
+             if l and not l.startswith(("Pass", "Errors: 0")) and not any(e in l for e in expected)]
     if r.returncode != 0 or (args[0].endswith(("sjasmplus", "sjasmplus.exe")) and noise):
         print("\n".join(noise))
         sys.exit("%s failed" % " ".join(args))
@@ -58,7 +62,8 @@ def main():
     appmake = appmake_path(parser, args)
 
     with tempfile.TemporaryDirectory() as tmp:
-        shutil.copy(os.path.join(FORMATS, "program.asm"), tmp)
+        for name in ("program.asm", "sna_stack.asm"):
+            shutil.copy(os.path.join(FORMATS, name), tmp)
 
         def source(name, text):
             with open(os.path.join(tmp, name), "w", newline="\n") as f:
@@ -70,6 +75,13 @@ def main():
                          '        EMPTYTAP "program.tap"\n'
                          '        SAVETAP "program.tap", CODE, "program", start, program_end - start\n')
         run([sjasm, "--nologo", "zx.asm"], tmp)
+        source("sna.asm", '        DEVICE ZXSPECTRUM48\n        INCLUDE "program.asm"\n'
+                          '        SAVESNA "program.sna", start\n')
+        run([sjasm, "--nologo", "sna.asm"], tmp)
+        source("stack.asm", '        DEVICE ZXSPECTRUM48\n        INCLUDE "sna_stack.asm"\n'
+                            '        SAVESNA "sna_stack.sna", start\n')
+        # It warns that the start goes to 0x4000.
+        run([sjasm, "--nologo", "stack.asm"], tmp, expected=("warning[sna48]",))
         source("cpc.asm", '        DEVICE AMSTRADCPC464\n        INCLUDE "program.asm"\n'
                           '        SAVEAMSDOS "sjasmplus.amsdos", start, program_end - start, start\n')
         run([sjasm, "--nologo", "cpc.asm"], tmp)
@@ -78,7 +90,8 @@ def main():
         run([appmake, "+trs80", "-b", "image.bin", "-c", "image", "--org", ORG, "--cmd"], tmp)
         run([appmake, "+msx", "-b", "image.bin", "--org", ORG, "-o", "am.msx"], tmp)
 
-        for made, name in (("program.tap", "program.tap"), ("sjasmplus.amsdos", "program.amsdos"),
+        for made, name in (("program.tap", "program.tap"), ("program.sna", "program.sna"),
+                           ("sna_stack.sna", "sna_stack.sna"), ("sjasmplus.amsdos", "program.amsdos"),
                            ("am.cpc", "program_appmake.amsdos"), ("image.cmd", "program.cmd"),
                            ("am.msx", "program.msx")):
             shutil.copy(os.path.join(tmp, made), os.path.join(FORMATS, name))

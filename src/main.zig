@@ -22,13 +22,13 @@ const usage =
     \\  --origin ADDR   address of the first byte when the source has no ORG
     \\  --machine NAME  cpm (com at 0x0100), zx48 (tap), cpc (amsdos),
     \\                  trs80 (cmd) or msx (msx)
-    \\  --format NAME   bin, com, tap, amsdos, cmd or msx
+    \\  --format NAME   bin, com, tap, sna, amsdos, cmd or msx
     \\  -I DIR          where to look for INCLUDE and INCBIN files after the
     \\                  directory of the file that names them
     \\
     \\The format is the first of: --format, FORMAT in the source, the machine's,
-    \\the output file's extension (.bin, .com, .tap or .cmd), and bin. A tap or
-    \\AMSDOS header without a name takes the output file's name.
+    \\the output file's extension (.bin, .com, .tap, .sna or .cmd), and bin. A
+    \\tap or AMSDOS header without a name takes the output file's name.
     \\
 ;
 
@@ -168,7 +168,7 @@ fn formatOfExtension(path: []const u8) ?z80.Format {
     if (extension.len == 0) return null;
     const format = z80.Format.named(extension[1..], "") orelse return null;
     return switch (format) {
-        .bin, .com, .tap, .cmd => format,
+        .bin, .com, .tap, .sna, .cmd => format,
         .amsdos, .msx => null,
     };
 }
