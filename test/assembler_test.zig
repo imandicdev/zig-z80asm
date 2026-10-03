@@ -113,6 +113,42 @@ test "every emit after END in a Zig body is an error" {
     try std.testing.expectEqualSlices(u8, &.{0x00}, r.bytes);
 }
 
+fn skippedCalls(_: void, a: *Assembler) Assembler.Error!void {
+    try a.line("  IF 0");
+    a.org(0x100);
+    try a.label("skipped");
+    try a.equ("also_skipped", try a.eval("nowhere"));
+    try a.emit(isa.nop());
+    try a.bytes("x");
+    try a.line("  ENDIF");
+    try a.emit(isa.halt());
+    try a.line("  IFDEF skipped");
+    try a.emit(isa.nop());
+    try a.line("  ENDIF");
+}
+
+const skipped_text =
+    \\  IF 0
+    \\  ORG 100h
+    \\skipped:
+    \\also_skipped EQU nowhere
+    \\  NOP
+    \\  DB "x"
+    \\  ENDIF
+    \\  HALT
+    \\  IFDEF skipped
+    \\  NOP
+    \\  ENDIF
+;
+
+test "Zig calls in a skipped IF block do nothing, like the lines there" {
+    try expectBytes(skipped_text, &.{0x76});
+    try std.testing.expectEqualSlices(u8, &.{0x76}, comptime z80.comptimeBuild(.{}, {}, skippedCalls));
+    const r = z80.run(.{}, workspace.buffers(), {}, skippedCalls);
+    try expectOk(r);
+    try std.testing.expectEqualSlices(u8, &.{0x76}, r.bytes);
+}
+
 // Features that sjasmplus also accepts are checked against it in
 // test/cases_test.zig. SDCC syntax is not, so it is checked here.
 

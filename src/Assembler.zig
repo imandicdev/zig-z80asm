@@ -458,11 +458,13 @@ pub fn here(a: *const Assembler) u16 {
 }
 
 pub fn org(a: *Assembler, address: u16) void {
+    if (a.skip_depth != 0) return;
     a.pc = address;
 }
 
 /// `name` is kept, not copied; see `run`.
 pub fn label(a: *Assembler, name: []const u8) Error!void {
+    if (a.skip_depth != 0) return;
     try a.checkArea();
     try a.define(name, .{ .value = @intCast(a.pc) });
     // An ordinary label starts a scope for both kinds of local label.
@@ -474,6 +476,7 @@ pub fn label(a: *Assembler, name: []const u8) Error!void {
 
 /// `name` is kept, not copied; see `run`.
 pub fn equ(a: *Assembler, name: []const u8, v: Value) Error!void {
+    if (a.skip_depth != 0) return;
     try a.define(name, v);
     // As in sjasmplus, EQU starts a new scope for .local labels, but not for
     // sdas ones.
@@ -485,11 +488,13 @@ pub fn emit(a: *Assembler, e: isa.Encoding) Error!void {
 }
 
 pub fn bytes(a: *Assembler, data: []const u8) Error!void {
+    if (a.skip_depth != 0) return;
     for (data) |b| try a.store(b);
 }
 
 /// Evaluates an expression such as "msg+1" or "$-start".
 pub fn eval(a: *Assembler, text: []const u8) Error!Value {
+    if (a.skip_depth != 0) return .{ .value = 0, .known = false };
     a.statement_pc = a.pc;
     var l = try a.tokenize(text);
     try a.expectFits(&l);
@@ -1354,7 +1359,9 @@ fn keyword(name: []const u8) ?Keyword {
 }
 
 /// Assembles one line of source text. Labels defined on the line keep
-/// pointing into `text`; see `run`.
+/// pointing into `text`; see `run`. While an IF given here skips its block,
+/// the other calls skip too: org, label, equ, emit and bytes do nothing, and
+/// eval gives an unknown value.
 pub fn line(a: *Assembler, text: []const u8) Error!void {
     // Work on a copy for the same reason as LineReader. Longer lines are parsed
     // in place.
