@@ -617,6 +617,8 @@ fn find(a: *Assembler, name: []const u8) ?*Symbol {
 }
 
 fn define(a: *Assembler, name: []const u8, v: Value) Error!void {
+    // An empty name marks a free slot of the table.
+    if (name.len == 0) return a.fail("a symbol needs a name", .{});
     const capacity = a.symbols.len / slots_per_entry;
     // Also keeps `slot` away from a table without slots.
     if (capacity == 0) return a.fail("too many symbols (capacity 0)", .{});

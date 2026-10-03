@@ -141,6 +141,25 @@ const skipped_text =
     \\  ENDIF
 ;
 
+fn emptyNames(_: void, a: *Assembler) Assembler.Error!void {
+    a.label("") catch {};
+    try a.equ("", .{ .value = 1 });
+}
+
+test "an empty symbol name is an error, not a crash" {
+    const r = z80.run(.{}, workspace.buffers(), {}, emptyNames);
+    try std.testing.expectEqual(2, r.diagnostics.len);
+    for (r.diagnostics) |d| {
+        var buf: [200]u8 = undefined;
+        try std.testing.expectEqualStrings("a symbol needs a name", try std.fmt.bufPrint(&buf, "{f}", .{d}));
+    }
+    const at_comptime = comptime blk: {
+        var ws: z80.Workspace(0x10, 4, 4) = undefined;
+        break :blk z80.run(.{}, ws.buffers(), {}, emptyNames).diagnostics.len;
+    };
+    try std.testing.expectEqual(2, at_comptime);
+}
+
 test "Zig calls in a skipped IF block do nothing, like the lines there" {
     try expectBytes(skipped_text, &.{0x76});
     try std.testing.expectEqualSlices(u8, &.{0x76}, comptime z80.comptimeBuild(.{}, {}, skippedCalls));
