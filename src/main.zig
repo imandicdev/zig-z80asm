@@ -206,11 +206,13 @@ fn slashes(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
     return copy;
 }
 
-/// `name` in the directory of the file `from`.
+/// `name` in the directory of the file `from`, or `name` itself when it is
+/// absolute.
 fn near(arena: std.mem.Allocator, from: []const u8, name: []const u8) ![]const u8 {
-    const relative = try slashes(arena, name);
-    const dir = std.fs.path.dirname(from) orelse return relative;
-    return std.fs.path.join(arena, &.{ dir, relative });
+    const path = try slashes(arena, name);
+    if (std.fs.path.isAbsolute(path)) return path;
+    const dir = std.fs.path.dirname(from) orelse return path;
+    return std.fs.path.join(arena, &.{ dir, path });
 }
 
 const Found = struct { path: []const u8, data: []const u8 };
@@ -220,6 +222,7 @@ const Found = struct { path: []const u8, data: []const u8 };
 fn readNear(io: std.Io, arena: std.mem.Allocator, from: []const u8, name: []const u8, dirs: []const []const u8) !?Found {
     if (try readIfThere(io, arena, try near(arena, from, name))) |found| return found;
     const relative = try slashes(arena, name);
+    if (std.fs.path.isAbsolute(relative)) return null;
     for (dirs) |dir| {
         if (try readIfThere(io, arena, try std.fs.path.join(arena, &.{ dir, relative }))) |found| return found;
     }

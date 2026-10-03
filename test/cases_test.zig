@@ -41,3 +41,7 @@ test "assembly matches sjasmplus in both modes" {
 test "the command-line tool reads each INCLUDE next to the file that names it" {
     try std.testing.expectEqualSlices(u8, @embedFile("cases/include_dirs.bin"), @embedFile("cli_include_dirs"));
 }
+
+test "the command-line tool reads an absolute INCLUDE path as it is" {
+    try std.testing.expectEqualSlices(u8, &.{1}, @embedFile("cli_absolute"));
+}

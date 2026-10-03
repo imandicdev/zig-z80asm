@@ -67,6 +67,13 @@ pub fn build(b: *std.Build) void {
         cli_include_dirs.addFileInput(b.path(b.fmt("test/cases/include_dirs/{s}", .{name})));
     }
     cases_tests.addAnonymousImport("cli_include_dirs", .{ .root_source_file = cli_include_dirs.addOutputFileArg("include_dirs.bin") });
+    // An absolute name, from a source in another directory than the file.
+    const absolute_data = b.dupe(b.pathFromRoot("test/cases/include_dirs/left/data.inc"));
+    std.mem.replaceScalar(u8, absolute_data, '\\', '/');
+    const cli_absolute = b.addRunArtifact(exe);
+    cli_absolute.addFileArg(b.addWriteFiles().add("absolute.asm", b.fmt("  INCLUDE \"{s}\"\n", .{absolute_data})));
+    cli_absolute.addFileInput(b.path("test/cases/include_dirs/left/data.inc"));
+    cases_tests.addAnonymousImport("cli_absolute", .{ .root_source_file = cli_absolute.addOutputFileArg("absolute.bin") });
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = cases_tests })).step);
 
     // Every reject case must fail to compile with its message; test/reject_test.zig
