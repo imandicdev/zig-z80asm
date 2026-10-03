@@ -45,6 +45,7 @@ pub const cases = [_]Case{
     .{ .name = "phase_error", .source = "p1: DS 1-(p2-p1)\np2: NOP\n", .expect = "phase error: label 'p2' did not settle" },
     .{ .name = "overlap", .source = "  ORG 0\n  NOP\n  ORG 0\n  NOP\n", .expect = "line 4: overlap at 0x0000: address written twice" },
     .{ .name = "invalid_operands", .source = "  LD (HL),(HL)\n", .expect = "line 1: invalid operands" },
+    .{ .name = "in_f_with_register", .source = "  IN F,A,(C)\n", .expect = "line 1: invalid operands" },
     .{ .name = "unknown_instruction", .source = "  FOO A\n", .expect = "line 1: unknown instruction 'FOO'" },
     .{ .name = "register_in_expression", .source = "  DW A\n", .expect = "line 1: register 'A' used in an expression" },
     .{ .name = "missing_rparen", .source = "  LD A,(HL\n", .expect = "line 1: expected ')' before end of line" },

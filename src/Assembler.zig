@@ -1960,6 +1960,8 @@ fn input(a: *Assembler, l: *Line) Error!void {
     if (t.tag == .identifier and std.ascii.eqlIgnoreCase(t.text, "f") and l.peekAt(1).tag == .comma) {
         _ = l.take();
         _ = l.take();
+        if (!(try a.operand(l)).isMemReg(.c)) return a.invalid();
+        return a.emit(isa.inFC());
     }
     const first = try a.operand(l);
     if (!l.eat(.comma)) {
