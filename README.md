@@ -218,7 +218,7 @@ machine is the CPU, the Z80 for all of them, and a format; `cpm` also makes
 
 ## Differences from sjasmplus
 
-Six, all deliberate:
+Seven, all deliberate:
 
 - The output is a memory image from the lowest to the highest address
   written. Gaps between ORGs are zeros, and code after an ORG below earlier
@@ -239,6 +239,9 @@ Six, all deliberate:
 - A shift by a count outside 0..31 gives 0. sjasmplus gives what the x86
   shift instruction does with the count mod 32 (`1 << 32` is 1), which its
   C++ source leaves undefined.
+- `SUB A,B`, `AND A,B`, `XOR A,B`, `OR A,B` and `CP A,B` are `SUB B` and so
+  on, as Zilog's notation, M80 and z88dk read them. sjasmplus reads the
+  comma as a second instruction: `AND A,B` is `AND A` followed by `AND B`.
 
 ## Not in 0.3
 
