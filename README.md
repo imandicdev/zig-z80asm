@@ -111,7 +111,7 @@ writes a tap file named `game`.
 Requires Zig 0.16.0.
 
 ```
-zig fetch --save git+https://github.com/imandicdev/zig-z80asm#v0.3.0
+zig fetch --save git+https://github.com/imandicdev/zig-z80asm#v0.3.1
 ```
 
 and import the module in `build.zig`:

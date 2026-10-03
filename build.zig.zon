@@ -1,6 +1,6 @@
 .{
     .name = .z80asm,
-    .version = "0.3.0",
+    .version = "0.3.1",
     .fingerprint = 0x4051225836d2407,
     .minimum_zig_version = "0.16.0",
     .paths = .{

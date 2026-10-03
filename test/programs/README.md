@@ -27,14 +27,14 @@ The last form also assembles the Spectrum ROM at comptime, which is slow.
 ## Performance
 
 The full Spectrum ROM (17,699 lines with the sysvars file), before the
-optimizations, in 0.1.0, 0.2.0 and 0.3.0. Zig 0.16.0, Windows x86_64.
+optimizations, in 0.1.0, 0.2.0, 0.3.0 and 0.3.1. Zig 0.16.0, Windows x86_64.
 
-| | Before | 0.1.0 | 0.2.0 | 0.3.0 |
-|---|---|---|---|---|
-| Comptime: compile time | 28 min | 50 s | 48 s | 58 s |
-| Comptime: peak memory | about 5 GB | 1,067 MB | 1,040 MB | 1,053 MB |
-| Runtime, ReleaseFast | 13.1 ms | 3.4 ms | 3.4 ms | 4.0 ms |
-| Runtime, Debug | 107.6 ms | 40.7 ms | 40.7 ms | 41.3 ms |
+| | Before | 0.1.0 | 0.2.0 | 0.3.0 | 0.3.1 |
+|---|---|---|---|---|---|
+| Comptime: compile time | 28 min | 50 s | 48 s | 58 s | 51 s |
+| Comptime: peak memory | about 5 GB | 1,067 MB | 1,040 MB | 1,053 MB | 1,053 MB |
+| Runtime, ReleaseFast | 13.1 ms | 3.4 ms | 3.4 ms | 4.0 ms | 3.7 ms |
+| Runtime, Debug | 107.6 ms | 40.7 ms | 40.7 ms | 41.3 ms | 39.9 ms |
 
 Comptime is the test's compile step with `-Dprograms-comptime=true`, in a
 Debug build as the tests use, so it includes the 0xAA overwrite of line
@@ -55,6 +55,10 @@ So at comptime 0.3.0 takes as long as 0.2.0 and 14 MB more, and at runtime
 it is about 7% slower in ReleaseFast and as fast in Debug. The runtime cost
 came with the comparison and logical operators and with conditional
 assembly; later steps took back part of it (see Step by step).
+
+0.3.1 fixes bugs and adds nothing. On its day 0.3.0 took 52 s, 1,052 MB,
+3.76 ms and 39.5 ms, and 0.3.1 51 s, 1,053 MB, 3.71 ms and 39.9 ms (one
+comptime build and 25 `zig build bench` runs each): the same.
 
 The cleanup first made comptime about 2% slower. Three of its changes cost
 time at comptime, where every function call is interpreted: the per-pass
@@ -107,6 +111,7 @@ takes for a 10-line slice.
 | Formats tap, amsdos, cmd and msx, FORMAT | 3.99 ms / 40.7 ms | | 57 s, 1,052 MB |
 | Format sna | 3.82 ms / 41.7 ms | | 57 s, 1,052 MB |
 | Review fixes, 0.3.0 | 3.81 ms / 41.3 ms | | 58 s, 1,053 MB |
+| Bug fixes, 0.3.1 | 3.71 ms / 39.9 ms | | 51 s, 1,053 MB |
 
 The DB and DW change costs 0.3 ms at runtime without running any new code on
 the ROM: the DB and DW lines there all fit in one token buffer. Moving the
