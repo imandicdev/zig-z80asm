@@ -386,6 +386,17 @@ test "missing files are listed with the file that names them" {
     try std.testing.expectEqualStrings("", r.missing[1].from);
 }
 
+test "a missing file names the directory of the file that names it" {
+    const files = [_]z80.File{.{ .name = "lib/part.inc", .data = "  INCBIN \"data.bin\"\n" }};
+    const r = z80.assemble("  INCLUDE \"lib/part.inc\"\n", .{ .files = &files }, workspace.buffers());
+    try std.testing.expectEqual(1, r.missing.len);
+    try std.testing.expectEqualStrings("data.bin", r.missing[0].name);
+    try std.testing.expectEqualStrings("lib", r.missing[0].dir);
+    try std.testing.expectEqualStrings("lib/part.inc", r.missing[0].from);
+    var buf: [100]u8 = undefined;
+    try std.testing.expectEqualStrings("lib/part.inc:1: file 'lib/data.bin' is not in the file table", try firstDiagnostic(r, &buf));
+}
+
 test "INCLUDE nests up to max_include_depth" {
     const depth = Assembler.max_include_depth;
     const files = comptime blk: {

@@ -61,6 +61,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     cases_tests.addImport("z80asm", mod);
+    const cli_include_dirs = b.addRunArtifact(exe);
+    cli_include_dirs.addFileArg(b.path("test/cases/include_dirs.asm"));
+    for ([_][]const u8{ "left/part.inc", "left/data.inc", "right/part.inc", "right/data.inc" }) |name| {
+        cli_include_dirs.addFileInput(b.path(b.fmt("test/cases/include_dirs/{s}", .{name})));
+    }
+    cases_tests.addAnonymousImport("cli_include_dirs", .{ .root_source_file = cli_include_dirs.addOutputFileArg("include_dirs.bin") });
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = cases_tests })).step);
 
     // Every reject case must fail to compile with its message; test/reject_test.zig

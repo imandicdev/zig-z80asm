@@ -49,7 +49,11 @@ pub const File = struct {
 
 /// A file that INCLUDE or INCBIN names and `Options.files` does not have.
 pub const Missing = struct {
+    /// The name in the directive.
     name: []const u8,
+    /// The directory `name` is relative to: that of `from`, or empty. The file
+    /// belongs in `Options.files` as "dir/name", or as "name" when it is empty.
+    dir: []const u8,
     /// The file that names it; empty for the main source.
     from: []const u8,
     /// The line of `from` that names it.
@@ -68,8 +72,10 @@ pub const Options = struct {
     /// The format when neither `format`, FORMAT nor the machine gives one; the
     /// command-line tool takes it from the output file's extension.
     fallback_format: ?formats.Format = null,
-    /// The files INCLUDE and INCBIN can name, found by the exact name in the
-    /// directive, with \ read as /.
+    /// The files INCLUDE and INCBIN can name, with \ read as /. A name in a
+    /// directive is relative to the directory of the file that names it: what
+    /// "lib/util.inc" includes as "data.inc" is "lib/data.inc" here. Names in
+    /// the main source and absolute names are as written.
     files: []const File = &.{},
 
     fn defaultOrigin(o: Options) u16 {
@@ -1532,20 +1538,46 @@ fn sameFileName(x: []const u8, y: []const u8) bool {
     return true;
 }
 
-fn findFile(a: *const Assembler, name: []const u8) ?[]const u8 {
-    for (a.options.files) |f| if (sameFileName(f.name, name)) return f.data;
+fn isSeparator(c: u8) bool {
+    return c == '/' or c == '\\';
+}
+
+/// "/x", "\x" and "C:..." name the same file whichever file names them.
+fn isAbsolute(name: []const u8) bool {
+    if (name.len > 0 and isSeparator(name[0])) return true;
+    return name.len > 1 and name[1] == ':' and std.ascii.isAlphabetic(name[0]);
+}
+
+/// The directory that `name`, named in the current file, is relative to.
+fn nameDir(a: *const Assembler, name: []const u8) []const u8 {
+    if (isAbsolute(name)) return "";
+    const i = std.mem.lastIndexOfAny(u8, a.file_name, "/\\") orelse return "";
+    return a.file_name[0..i];
+}
+
+/// Whether `entry` is the table name of `name` in the directory `dir`. The
+/// parts are compared in place, as the core has nowhere to join them.
+fn isFileNamed(entry: []const u8, dir: []const u8, name: []const u8) bool {
+    if (dir.len == 0) return sameFileName(entry, name);
+    if (entry.len != dir.len + 1 + name.len) return false;
+    return sameFileName(entry[0..dir.len], dir) and isSeparator(entry[dir.len]) and sameFileName(entry[dir.len + 1 ..], name);
+}
+
+fn findFile(a: *const Assembler, dir: []const u8, name: []const u8) ?File {
+    for (a.options.files) |f| if (isFileNamed(f.name, dir, name)) return f;
     return null;
 }
 
-fn missingFile(a: *Assembler, name: []const u8) Error {
+fn missingFile(a: *Assembler, dir: []const u8, name: []const u8) Error {
     const listed = for (a.missing[0..a.missing_count]) |m| {
-        if (sameFileName(m.name, name)) break true;
+        if (sameFileName(m.dir, dir) and sameFileName(m.name, name)) break true;
     } else false;
     if (!listed and a.missing_count < a.missing.len) {
-        a.missing[a.missing_count] = .{ .name = name, .from = a.file_name, .line = a.line_number };
+        a.missing[a.missing_count] = .{ .name = name, .dir = dir, .from = a.file_name, .line = a.line_number };
         a.missing_count += 1;
     }
-    return a.fail("file '{s}' is not in the file table", .{name});
+    if (dir.len == 0) return a.fail("file '{s}' is not in the file table", .{name});
+    return a.fail("file '{s}/{s}' is not in the file table", .{ dir, name });
 }
 
 /// FORMAT name[, "title"]: the output format, unless the options give one.
@@ -1563,19 +1595,20 @@ fn formatDirective(a: *Assembler, l: *Line) Error!void {
 fn include(a: *Assembler, l: *Line) Error!void {
     const name = try a.fileName(l);
     try a.expectEnd(l);
-    const data = a.findFile(name) orelse return a.missingFile(name);
+    const dir = a.nameDir(name);
+    const file = a.findFile(dir, name) orelse return a.missingFile(dir, name);
     if (a.include_depth == max_include_depth) return a.fail("INCLUDE nested more than {d} deep", .{max_include_depth});
     for (a.open_files[0..a.include_depth]) |open| {
-        if (sameFileName(open, name)) return a.fail("'{s}' includes itself", .{name});
+        if (sameFileName(open, file.name)) return a.fail("'{s}' includes itself", .{name});
     }
     const outer_file = a.file_name;
     const outer_line = a.line_number;
     const outer_original = a.original;
     const outer_if_depth = a.if_depth;
-    a.open_files[a.include_depth] = name;
+    a.open_files[a.include_depth] = file.name;
     a.include_depth += 1;
-    a.file_name = name;
-    a.assembleText(data);
+    a.file_name = file.name;
+    a.assembleText(file.data);
     if (a.if_depth > outer_if_depth) {
         // An IF of the included file is still open at its end.
         a.line_number = a.if_lines[a.if_depth - 1];
@@ -1597,7 +1630,8 @@ fn incbin(a: *Assembler, l: *Line) Error!void {
     if (l.eat(.comma)) offset = try a.incbinValue(l, "offset");
     if (l.eat(.comma)) length = try a.incbinValue(l, "length");
     try a.expectEnd(l);
-    const data = a.findFile(name) orelse return a.missingFile(name);
+    const dir = a.nameDir(name);
+    const data = (a.findFile(dir, name) orelse return a.missingFile(dir, name)).data;
     if (offset > data.len) return a.fail("INCBIN offset {d} is past the end of '{s}' ({d} bytes)", .{ offset, name, data.len });
     const count = length orelse data.len - offset;
     if (count > data.len - offset) return a.fail("INCBIN of {d} bytes at {d} is past the end of '{s}' ({d} bytes)", .{ count, offset, name, data.len });

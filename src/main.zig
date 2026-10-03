@@ -117,13 +117,14 @@ pub fn main(init: std.process.Init) !void {
         if (result.missing.len == 0 and !new_format) break;
         if (new_format) options.fallback_format = named;
         for (result.missing) |m| {
-            if (files.has(m.name)) continue;
+            const table_name = if (m.dir.len == 0) m.name else try std.fmt.allocPrint(arena, "{s}/{s}", .{ m.dir, m.name });
+            if (files.has(table_name)) continue;
             const from = files.pathOf(m.from, input_path);
             const found = try readNear(init.io, arena, from, m.name, include_dirs.items) orelse {
                 not_found = m;
                 break;
             };
-            try files.table.append(arena, .{ .name = m.name, .data = found.data });
+            try files.table.append(arena, .{ .name = table_name, .data = found.data });
             try files.paths.append(arena, found.path);
         }
         if (not_found != null) break;

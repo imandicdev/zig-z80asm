@@ -86,11 +86,12 @@ const data = z80.formats.write(result.format, result.image(), file);
 
 `Workspace(output_size, symbol_slots, diagnostic_count)` is large (the
 example is about 260 KB), so keep it global or on the heap. `symbol_slots`
-must be a power of two; half of it is the symbol capacity. A file that
-INCLUDE or INCBIN names and `.files` does not have is an error, and
-`result.missing` lists it with the file and line that name it, so a caller
-that can read files adds them and assembles again, as the command-line tool
-does.
+must be a power of two; half of it is the symbol capacity. A name in
+INCLUDE or INCBIN is relative to the directory of the file that names it:
+what `lib/util.inc` includes as `data.inc` is `lib/data.inc` in `.files`.
+A file that `.files` does not have is an error, and `result.missing` lists
+it with that directory and the file and line that name it, so a caller that
+can read files adds them and assembles again, as the command-line tool does.
 
 ### Command line
 

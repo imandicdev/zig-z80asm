@@ -71,10 +71,14 @@ def main():
     sjasm = reference.path(parser, parser.parse_args(), reference.SJASMPLUS)
 
     # sjasmplus rejects backslashes in paths, so run it next to the files,
-    # with the files that cases INCLUDE (*.inc) and INCBIN (*.dat).
+    # with the files that cases INCLUDE (*.inc) and INCBIN (*.dat), and the
+    # directories that hold more of them.
     with tempfile.TemporaryDirectory() as tmp:
         for extra in glob.glob(os.path.join(CASES, "*.inc")) + glob.glob(os.path.join(CASES, "*.dat")):
             shutil.copy(extra, tmp)
+        for sub in os.scandir(CASES):
+            if sub.is_dir():
+                shutil.copytree(sub.path, os.path.join(tmp, sub.name))
         for asm in sorted(os.path.basename(p) for p in glob.glob(os.path.join(CASES, "*.asm"))):
             out = asm[:-4] + ".bin"
             with open(os.path.join(CASES, asm), newline="") as f:
